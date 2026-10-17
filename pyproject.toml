@@ -1,0 +1,22 @@
+[project]
+name = "noctiband"
+version = "0.0.1"
+requires-python = ">=3.11"
+dependencies = ["numpy", "pandas", "scipy", "scikit-learn", "matplotlib"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+extend-exclude = ["scripts", "notebooks", "create_epoch_features.py", "create_notebook.py", "plot_recording.py"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP"]
