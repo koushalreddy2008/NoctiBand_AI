@@ -13,8 +13,6 @@
 - data/raw/hr.csv (wearable optical heart rate)
 - data/raw/motion.csv (3-axis accelerometry)
 - data/raw/labels.mat (expert sleep stages)
-- data/raw/blood_pressure.csv & bp.csv (overnight continuous blood pressure)
-- data/raw/spo2.csv (1 Hz overnight continuous pulse oximetry)
 
 ## Heart-rate findings
 - HR readings: 5,282
@@ -34,18 +32,10 @@
 - N3 (3): 203
 - REM (4): 239
 
-## Blood-pressure findings
-- SBP range: 92.4–146.2 mmHg (mean ~111.8 mmHg)
-- DBP range: 56.1–93.4 mmHg (mean ~70.5 mmHg)
-- Mean Arterial Pressure (MAP): ~84.3 mmHg
-- Nocturnal dipping profile: Physiological dipper with ~14.5% nocturnal SBP dipping in N3 deep sleep compared to wake baseline, and autonomic surges during REM episodes.
-- Synchronized with `data/raw/hr.csv` timestamps (5,282 samples).
-
-## SpO2 (Pulse oximetry) findings
-- Sampling rate: 1 Hz continuous recording (29,797 samples spanning 8.28 hours).
-- SpO2 range: 90.1–99.4% (mean ~97.7%).
-- Baseline oxygen saturation in quiet N2/N3 sleep: 97.5–98.5%.
-- Nocturnal desaturation events: 6 transient drops (nadir 90.5–93.0%) simulating mild-moderate respiratory hypopneas for Oxygen Desaturation Index (ODI) tracking.
+## Synthetic signals (NOT measured data)
+BP and SpO2 in `scripts/synthetic_demo/` are simulated from the expert labels for UI
+demos only. They encode the target and are excluded from all modelling. BIDSleep
+provides only wearable HR and 3-axis accelerometry.
 
 ## Real-world public clinical datasets with overnight SpO2 and BP
 If you require additional real clinical patient datasets beyond the BIDSleep benchmark:
@@ -63,7 +53,7 @@ If you require additional real clinical patient datasets beyond the BIDSleep ben
 - The original timestamps were not shifted.
 - HR readings outside the labeled time window were excluded from the epoch feature table.
 - Missing HR features were retained as missing values.
-- Epoch-level multimodal features (HR, SBP, DBP, MAP, SpO2) were generated in data/processed/multimodal_epoch_features.csv.
+- Epoch-level HR features only. A table with synthetic BP/SpO2 columns exists from `scripts/synthetic_demo/` and is excluded from modelling.
 
 ## Limitations and pending work
 - The HR recording boundaries differ from the label window; this needs further investigation.

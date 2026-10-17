@@ -1,3 +1,5 @@
+# SYNTHETIC DEMO ONLY. Signals are generated from ground-truth sleep labels.
+# They leak the target. NEVER use them for training or evaluation.
 """
 Script: create_multimodal_features.py
 Purpose: Aggregate heart rate, blood pressure, and SpO2 into a synchronized
@@ -10,9 +12,9 @@ import pandas as pd
 from scipy.io import loadmat
 
 def extract_features():
-    root = Path(__file__).resolve().parent.parent
+    root = Path(__file__).resolve().parents[2]
     raw_dir = root / "data" / "raw"
-    processed_dir = root / "data" / "processed"
+    processed_dir = root / "data" / "synthetic_demo"
     processed_dir.mkdir(parents=True, exist_ok=True)
 
     # 1. Load labels & start time
