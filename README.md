@@ -129,10 +129,10 @@ For the complete project scope, technical architecture, dataset strategy, evalua
 
 ## 🚀 Development Roadmap
 
-- [ ] Set up and verify the Python development environment.
-- [ ] Obtain and explore the BIDSleep dataset.
-- [ ] Build the data-loading and preprocessing pipeline.
-- [ ] Implement and test 30-second epoch alignment.
+- [x] Set up and verify the Python development environment.
+- [x] Obtain and explore the BIDSleep dataset.
+- [x] Build the data-loading and preprocessing pipeline.
+- [x] Implement and test 30-second epoch alignment.
 - [ ] Extract features and establish baseline models.
 - [ ] Evaluate models using participant-level data splits.
 - [ ] Build the inference pipeline and nightly sleep report.
