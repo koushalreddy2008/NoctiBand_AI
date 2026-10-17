@@ -1,3 +1,5 @@
+# SYNTHETIC DEMO ONLY. Signals are generated from ground-truth sleep labels.
+# They leak the target. NEVER use them for training or evaluation.
 """
 Script: plot_multimodal_recording.py
 Purpose: Generate comprehensive overnight multimodal visualization showing:
@@ -14,9 +16,9 @@ from pathlib import Path
 from scipy.io import loadmat
 
 def plot_multimodal():
-    root = Path(__file__).resolve().parent.parent
+    root = Path(__file__).resolve().parents[2]
     raw_dir = root / "data" / "raw"
-    results_dir = root / "results" / "data_exploration"
+    results_dir = root / "results" / "synthetic_demo"
     results_dir.mkdir(parents=True, exist_ok=True)
 
     # 1. Load data
