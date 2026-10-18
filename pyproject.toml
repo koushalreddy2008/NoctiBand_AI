@@ -13,6 +13,9 @@ where = ["src"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = [
+    "data: integration tests requiring real benchmark data",
+]
 
 [tool.ruff]
 line-length = 100
