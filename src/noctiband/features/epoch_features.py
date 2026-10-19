@@ -42,6 +42,7 @@ LABEL_COLUMNS: list[str] = [
     "label",
     "label_binary",
     "label_3class",
+    "label_unknown",
 ]
 
 BASE_FEATURE_COLUMNS: list[str] = [
@@ -342,18 +343,46 @@ def build_epoch_table(
 
     # 6. Labels (if present)
     if night.labels is not None:
-        df["label"] = night.labels.astype(int)
-        df["label_binary"] = (night.labels > 0).astype(int)
-        # 0 = Wake (0), 1 = NREM (1, 2, 3), 2 = REM (4)
-        df["label_3class"] = np.where(
-            night.labels == 0,
-            0,
-            np.where(night.labels == 4, 2, 1),
-        ).astype(int)
+        raw_labels = night.labels.astype(int)
+        is_unknown = raw_labels == 5
+        n_unknown = int(is_unknown.sum())
+        if n_unknown > 0:
+            logger.info(
+                "Night %s/%s contains %d unknown (code 5) epochs.",
+                night.subject,
+                night.night,
+                n_unknown,
+            )
+
+        df["label_unknown"] = is_unknown
+
+        # Initialize labels as float to represent Unknown as NaN
+        labels_float = raw_labels.astype(float)
+        labels_float[is_unknown] = np.nan
+        df["label"] = labels_float
+
+        # Never map Unknown (code 5) to Wake (0) or Sleep (1)
+        binary_vals = np.full(n_epochs, np.nan, dtype=float)
+        known_mask = ~is_unknown
+        wake_mask = (raw_labels == 0) & known_mask
+        sleep_mask = (raw_labels >= 1) & (raw_labels <= 4) & known_mask
+        binary_vals[wake_mask] = 0.0
+        binary_vals[sleep_mask] = 1.0
+        df["label_binary"] = binary_vals
+
+        # 0 = Wake (0), 1 = NREM (1, 2, 3), 2 = REM (4), NaN = Unknown
+        class3_vals = np.full(n_epochs, np.nan, dtype=float)
+        class3_vals[wake_mask] = 0.0
+        nrem_mask = (raw_labels >= 1) & (raw_labels <= 3) & known_mask
+        rem_mask = (raw_labels == 4) & known_mask
+        class3_vals[nrem_mask] = 1.0
+        class3_vals[rem_mask] = 2.0
+        df["label_3class"] = class3_vals
     else:
         df["label"] = np.nan
         df["label_binary"] = np.nan
         df["label_3class"] = np.nan
+        df["label_unknown"] = False
 
     # Arrange columns deterministically
     present_meta = [c for c in METADATA_COLUMNS if c in df.columns]
@@ -372,6 +401,8 @@ def build_dataset(
     raw_root: str | Path,
     out_path: str | Path | None = None,
     config: dict[str, Any] | str | Path | None = None,
+    allow_low_motion: bool = False,
+    allow_partial: bool = False,
 ) -> pd.DataFrame:
     """Scan raw data directory, load all nights, extract features, and concatenate.
 
@@ -383,6 +414,10 @@ def build_dataset(
         If provided, save the combined dataset to CSV.
     config : dict or Path or None, optional
         Feature configuration override.
+    allow_low_motion : bool, default=False
+        If False, raise ValueError if any night's fraction of epochs with valid motion is < 50%.
+    allow_partial : bool, default=False
+        If False, raise ValueError if any night's HR or motion window coverage is < 50%.
 
     Returns
     -------
@@ -407,8 +442,41 @@ def build_dataset(
                     night_dir,
                     subject=subj_dir.name,
                     night=night_dir.name,
+                    allow_partial=allow_partial,
                 )
                 tbl = build_epoch_table(night_data, config=config)
+
+                # Valid-motion fraction guard
+                total_ep = len(tbl)
+                valid_m_count = int((~tbl["motion_missing"]).sum())
+                valid_m_fraction = (
+                    valid_m_count / float(total_ep) if total_ep > 0 else 0.0
+                )
+
+                logger.info(
+                    "Night %s/%s valid-motion fraction: %.2f%% (%d/%d epochs)",
+                    subj_dir.name,
+                    night_dir.name,
+                    valid_m_fraction * 100,
+                    valid_m_count,
+                    total_ep,
+                )
+
+                if valid_m_fraction < 0.5:
+                    if not allow_low_motion:
+                        raise ValueError(
+                            f"Night {subj_dir.name}/{night_dir.name} valid-motion fraction "
+                            f"{valid_m_fraction:.1%} is below 50% ({valid_m_count}/{total_ep} "
+                            f"epochs). Set allow_low_motion=True to allow."
+                        )
+                    logger.warning(
+                        "Night %s/%s valid-motion fraction %.1f%% is below 50%%, but "
+                        "allow_low_motion=True.",
+                        subj_dir.name,
+                        night_dir.name,
+                        valid_m_fraction * 100,
+                    )
+
                 tables.append(tbl)
                 logger.info(
                     "Extracted %d epochs from %s/%s",
@@ -417,6 +485,10 @@ def build_dataset(
                     night_dir.name,
                 )
             except Exception as exc:
+                if isinstance(exc, ValueError) and (
+                    "below 50%" in str(exc) or "valid-motion fraction" in str(exc)
+                ):
+                    raise
                 logger.warning("Skipping night at %s: %s", night_dir, exc)
 
     if not tables:
