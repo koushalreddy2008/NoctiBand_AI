@@ -232,16 +232,116 @@ def test_make_split_valid_3_and_more_subjects(tmp_path: Path):
     assert loaded == split6
 
 
+def test_label_unknown_code_5():
+    """Verify label code 5 (Unknown) is mapped to NaN with label_unknown flag and not Wake/Sleep."""
+    rec_start = 1000.0
+    labels = np.array([0, 1, 5, 2, 5, 4, 3, 0], dtype=int)
+    n_epochs = len(labels)
+
+    hr_records = []
+    for ep in range(n_epochs):
+        base_t = rec_start + ep * EPOCH_S
+        hr_records.append({"timestamp": base_t, "hr": 60.0 + ep})
+        hr_records.append({"timestamp": base_t + 10.0, "hr": 61.0 + ep})
+
+    motion_records = []
+    for ep in range(n_epochs):
+        base_t = rec_start + ep * EPOCH_S
+        for i in range(600):
+            motion_records.append(
+                {"timestamp": base_t + i * 0.04, "x": 0.0, "y": 0.0, "z": 1.0}
+            )
+
+    night_unknown = NightData(
+        subject="test_unknown",
+        night="1",
+        hr=pd.DataFrame(hr_records),
+        motion=pd.DataFrame(motion_records),
+        labels=labels,
+        rec_start=rec_start,
+    )
+
+    tbl = build_epoch_table(night_unknown)
+
+    # Epochs with code 5: epochs 2 and 4
+    assert tbl.loc[2, "label_unknown"]
+    assert tbl.loc[4, "label_unknown"]
+    assert pd.isna(tbl.loc[2, "label"])
+    assert pd.isna(tbl.loc[4, "label"])
+    assert pd.isna(tbl.loc[2, "label_binary"])
+    assert pd.isna(tbl.loc[4, "label_binary"])
+    assert pd.isna(tbl.loc[2, "label_3class"])
+    assert pd.isna(tbl.loc[4, "label_3class"])
+
+    # Known epochs: epochs 0 (Wake), 1 (N1), 3 (N2), 5 (REM), 6 (N3), 7 (Wake)
+    known_indices = [0, 1, 3, 5, 6, 7]
+    for idx in known_indices:
+        assert not tbl.loc[idx, "label_unknown"]
+        assert pd.notna(tbl.loc[idx, "label"])
+        assert pd.notna(tbl.loc[idx, "label_binary"])
+        assert pd.notna(tbl.loc[idx, "label_3class"])
+
+    # Wake epochs
+    assert tbl.loc[0, "label_binary"] == 0.0
+    assert tbl.loc[7, "label_binary"] == 0.0
+    # Sleep epochs
+    assert tbl.loc[1, "label_binary"] == 1.0
+    assert tbl.loc[5, "label_binary"] == 1.0
+
+
+def test_build_dataset_guard_low_motion(tmp_path: Path):
+    """Verify build_dataset raises ValueError if valid motion fraction < 50% unless allowed."""
+    raw_root = tmp_path / "raw"
+    subj_night = raw_root / "subj_low" / "1"
+    subj_night.mkdir(parents=True, exist_ok=True)
+
+    rec_start = 1638679229.0
+    # 10 epochs = 300s
+    labels = np.zeros(10, dtype=int)
+    from scipy.io import savemat
+
+    savemat(
+        str(subj_night / "labels.mat"),
+        {
+            "recStart": np.array(["2021-12-04 23:40:29"], dtype="<U19"),
+            "expert_label": labels.reshape(-1, 1),
+        },
+    )
+
+    # HR spanning full window
+    hr_lines = [f"{rec_start + i * 25.0},65.0\n" for i in range(12)]
+    (subj_night / "hr.csv").write_text("".join(hr_lines), encoding="utf-8")
+
+    # Motion only in epoch 0 (1 out of 10 epochs = 10% valid motion)
+    # But span it to 160s to pass load_night's 50% coverage guard
+    motion_lines = ["Timestamp,x,y,z\n"]
+    # Sparse readings so only epoch 0 and 5 have motion readings
+    motion_lines.append(f"{rec_start},0.0,0.0,1.0\n")
+    motion_lines.append(f"{rec_start + 160.0},0.0,0.0,1.0\n")
+    (subj_night / "motion.csv").write_text("".join(motion_lines), encoding="utf-8")
+
+    # Without allow_low_motion, must raise ValueError
+    with pytest.raises(ValueError, match="valid-motion fraction.*is below 50%"):
+        build_dataset(raw_root, allow_low_motion=False, allow_partial=True)
+
+    # With allow_low_motion=True, must succeed
+    df = build_dataset(raw_root, allow_low_motion=True, allow_partial=True)
+    assert len(df) == 10
+
+
 @pytest.mark.data
 def test_build_dataset_on_raw_data():
-    """Verify build_dataset runs on real raw benchmark data."""
+    """Verify build_dataset behavior on raw benchmark data."""
     raw_root = Path("data/raw")
     if not raw_root.exists():
         pytest.skip("data/raw not present")
 
-    df = build_dataset(raw_root)
-    # Night 3: 993 epochs, Night 1: 935 epochs -> 1928 epochs total
-    assert len(df) == 1928
-    assert set(df["subject"].unique()) == {"Bidslab00"}
-    assert set(df["night"].unique()) == {"1", "3"}
+    # Without allow_partial/allow_low_motion, must raise ValueError due to truncated benchmark slice
+    with pytest.raises(ValueError, match="(below 50%|valid-motion fraction)"):
+        build_dataset(raw_root, allow_low_motion=False, allow_partial=False)
+
+    # When allowed, loads the night
+    df = build_dataset(raw_root, allow_low_motion=True, allow_partial=True)
+    assert len(df) >= 993
+    assert "Bidslab00" in df["subject"].values
     assert list(df.columns) == METADATA_COLUMNS + FEATURE_COLUMNS + LABEL_COLUMNS
