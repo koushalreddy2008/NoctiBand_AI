@@ -165,8 +165,8 @@ def create_synthetic_night(
     if hr_rows is None:
         hr_rows = [
             [rec_start_unix, 65.0],
-            [rec_start_unix + 5.0, 66.0],
-            [rec_start_unix + 10.0, 67.0],
+            [rec_start_unix + 70.0, 66.0],
+            [rec_start_unix + 145.0, 67.0],
         ]
     with open(night_dir / "hr.csv", "w", encoding="utf-8") as f:
         for r in hr_rows:
@@ -178,8 +178,8 @@ def create_synthetic_night(
     if motion_rows is None:
         motion_rows = [
             [rec_start_unix, 0.0, 0.0, 1.0],
-            [rec_start_unix + 0.02, 0.01, -0.01, 0.99],
-            [rec_start_unix + 0.04, 0.02, 0.00, 1.01],
+            [rec_start_unix + 70.0, 0.01, -0.01, 0.99],
+            [rec_start_unix + 148.0, 0.02, 0.00, 1.01],
         ]
     with open(night_dir / "motion.csv", "w", encoding="utf-8") as f:
         if motion_header:
@@ -253,16 +253,16 @@ def test_load_night_unsorted_and_duplicates(tmp_path: Path):
     night_dir = tmp_path / "unsorted_dup"
     rec_start = 1638679229.0
     hr_rows = [
-        [rec_start + 20.0, 70.0],
-        [rec_start + 10.0, 65.0],
-        [rec_start + 10.0, 65.0],  # duplicate
-        [rec_start + 5.0, 60.0],
+        [rec_start + 145.0, 70.0],
+        [rec_start + 70.0, 65.0],
+        [rec_start + 70.0, 65.0],  # duplicate
+        [rec_start, 60.0],
     ]
     motion_rows = [
-        [rec_start + 0.10, 0.1, 0.1, 0.9],
-        [rec_start + 0.02, 0.0, 0.0, 1.0],
-        [rec_start + 0.02, 0.0, 0.0, 1.0],  # duplicate
-        [rec_start + 0.06, 0.0, 0.1, 1.0],
+        [rec_start + 148.0, 0.1, 0.1, 0.9],
+        [rec_start + 70.0, 0.0, 0.0, 1.0],
+        [rec_start + 70.0, 0.0, 0.0, 1.0],  # duplicate
+        [rec_start, 0.0, 0.1, 1.0],
     ]
     create_synthetic_night(
         night_dir, hr_rows=hr_rows, motion_rows=motion_rows, motion_header=True
@@ -281,13 +281,13 @@ def test_load_night_drops_nans(tmp_path: Path):
     rec_start = 1638679229.0
     hr_rows = [
         [rec_start, 60.0],
-        [rec_start + 5.0, float("nan")],
-        [rec_start + 10.0, 62.0],
+        [rec_start + 70.0, float("nan")],
+        [rec_start + 145.0, 62.0],
     ]
     motion_rows = [
         [rec_start, 0.0, 0.0, 1.0],
-        [rec_start + 0.02, float("nan"), 0.0, 1.0],
-        [rec_start + 0.04, 0.0, 0.0, 1.0],
+        [rec_start + 70.0, float("nan"), 0.0, 1.0],
+        [rec_start + 148.0, 0.0, 0.0, 1.0],
     ]
     create_synthetic_night(night_dir, hr_rows=hr_rows, motion_rows=motion_rows)
 
@@ -327,15 +327,62 @@ def test_load_night_alignment_guard(tmp_path: Path, caplog: pytest.LogCaptureFix
     with pytest.raises(ValueError, match="likely timezone/unit bug"):
         load_night(night_dir_fail)
 
-    # First HR reading 400s away (> 300s, <= 3600s): should warn but succeed
+    # First HR reading 400s away (> 300s, <= 3600s): should warn but succeed with allow_partial=True
     night_dir_warn = tmp_path / "align_warn"
     hr_rows_warn = [[rec_start + 400.0, 60.0]]
     create_synthetic_night(night_dir_warn, hr_rows=hr_rows_warn, motion_rows=motion_rows)
 
     with caplog.at_level(logging.WARNING):
-        data = load_night(night_dir_warn)
+        data = load_night(night_dir_warn, allow_partial=True)
     assert len(data.hr) == 1
     assert any("> 300s" in r.message for r in caplog.records)
+
+
+def test_load_night_coverage_guard_full(tmp_path: Path):
+    """Full coverage (> 95% of window) loads cleanly without warnings."""
+    night_dir = tmp_path / "full_cov"
+    create_synthetic_night(night_dir)
+    data = load_night(night_dir)
+    assert len(data.hr) > 0
+    assert len(data.motion) > 0
+
+
+def test_load_night_coverage_guard_partial_10_percent(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+):
+    """10% coverage raises ValueError unless allow_partial=True."""
+    night_dir = tmp_path / "partial_10"
+    rec_start = 1638679229.0
+    # 5 epochs = 150s window; 10% is 15s
+    hr_rows_10pct = [[rec_start, 60.0], [rec_start + 15.0, 62.0]]
+    motion_rows = [[rec_start, 0.0, 0.0, 1.0], [rec_start + 148.0, 0.0, 0.0, 1.0]]
+    create_synthetic_night(night_dir, hr_rows=hr_rows_10pct, motion_rows=motion_rows)
+
+    with pytest.raises(ValueError, match="HR covered fraction 10.0%.*is below 50%"):
+        load_night(night_dir, allow_partial=False)
+
+    with caplog.at_level(logging.WARNING):
+        data = load_night(night_dir, allow_partial=True)
+    assert len(data.hr) == 2
+    assert any("below 50%" in r.message for r in caplog.records)
+
+
+def test_load_night_coverage_guard_early_stop(tmp_path: Path, caplog: pytest.LogCaptureFixture):
+    """Early stop at 40% of window raises ValueError unless allow_partial=True."""
+    night_dir = tmp_path / "early_stop"
+    rec_start = 1638679229.0
+    # 5 epochs = 150s window; 40% is 60s
+    motion_rows_40pct = [[rec_start, 0.0, 0.0, 1.0], [rec_start + 60.0, 0.0, 0.0, 1.0]]
+    hr_rows = [[rec_start, 60.0], [rec_start + 145.0, 62.0]]
+    create_synthetic_night(night_dir, hr_rows=hr_rows, motion_rows=motion_rows_40pct)
+
+    with pytest.raises(ValueError, match="motion covered fraction 40.0%.*is below 50%"):
+        load_night(night_dir, allow_partial=False)
+
+    with caplog.at_level(logging.WARNING):
+        data = load_night(night_dir, allow_partial=True)
+    assert len(data.motion) == 2
+    assert any("below 50%" in r.message for r in caplog.records)
 
 
 def test_load_night_missing_labels_mat(tmp_path: Path):
@@ -373,7 +420,11 @@ def test_load_night_integration_benchmark():
     if not night_dir.exists():
         pytest.skip(f"Integration data folder {night_dir} absent.")
 
-    data = load_night(night_dir)
+    # Without allow_partial, the coverage guard must raise ValueError on truncated benchmark slice
+    with pytest.raises(ValueError, match="below 50% of the recording window"):
+        load_night(night_dir, allow_partial=False)
+
+    data = load_night(night_dir, allow_partial=True)
     assert data.subject == "Bidslab00"
     assert data.night == "3"
     assert data.labels is not None
