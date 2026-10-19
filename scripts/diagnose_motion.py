@@ -184,6 +184,13 @@ def diagnose_csv(
         epochs_with_data = n_epochs - epochs_zero
         zero_epoch_indices = counts_per_epoch[counts_per_epoch == 0].index.tolist()
 
+        raw_first = float(ts_series.iloc[0])
+        raw_last = float(ts_series.iloc[-1])
+        clipped_first = max(raw_first, window_start)
+        clipped_last = min(raw_last, window_end)
+        span = max(0.0, clipped_last - clipped_first)
+        covered_fraction = span / window_dur
+
         result["label_window_coverage"] = {
             "rec_start": rec_start,
             "n_epochs": n_epochs,
@@ -192,6 +199,7 @@ def diagnose_csv(
             "samples_before_window": int((ts_series < window_start).sum()),
             "samples_after_window": int((ts_series >= window_end).sum()),
             "fraction_epochs_with_data": round(epochs_with_data / n_epochs, 4),
+            "covered_fraction": round(covered_fraction, 4),
             "samples_per_epoch": {
                 "min": int(counts_per_epoch.min()),
                 "median": float(counts_per_epoch.median()),
@@ -224,7 +232,7 @@ def diagnose_csv(
     return result
 
 
-def diagnose(night_dir: str | Path) -> dict[str, Any]:
+def diagnose(night_dir: str | Path, allow_partial: bool = False) -> dict[str, Any]:
     """Diagnose hr.csv and motion.csv against labels.mat in night_dir."""
     night_path = Path(night_dir).resolve()
     if not night_path.exists():
@@ -246,7 +254,9 @@ def diagnose(night_dir: str | Path) -> dict[str, Any]:
             series = pd.Series(labels_arr)
             expert_labels_summary = {
                 "total_epochs": n_epochs,
-                "stage_counts": {int(k): int(v) for k, v in series.value_counts().sort_index().items()},
+                "stage_counts": {
+                    int(k): int(v) for k, v in series.value_counts().sort_index().items()
+                },
             }
 
     hr_report = diagnose_csv(
@@ -255,6 +265,31 @@ def diagnose(night_dir: str | Path) -> dict[str, Any]:
     motion_report = diagnose_csv(
         night_path / "motion.csv", signal_type="motion", rec_start=rec_start, n_epochs=n_epochs
     )
+
+    # Coverage guard: covered_fraction = (last ts - first ts, clipped to label window) / (n_epochs*30)
+    for sig_name, rep in [("HR", hr_report), ("motion", motion_report)]:
+        cov_frac = rep.get("label_window_coverage", {}).get("covered_fraction")
+        if cov_frac is not None:
+            logger.info("%s covered fraction in %s: %.4f", sig_name, night_path, cov_frac)
+            if cov_frac < 0.5:
+                if not allow_partial:
+                    raise ValueError(
+                        f"{sig_name} covered fraction {cov_frac:.1%} in {night_path} is below 50% "
+                        f"of the recording window. Set allow_partial=True to proceed."
+                    )
+                logger.warning(
+                    "%s covered fraction %.1f%% in %s is below 50%%, but allow_partial=True.",
+                    sig_name,
+                    cov_frac * 100,
+                    night_path,
+                )
+            elif cov_frac < 0.95:
+                logger.warning(
+                    "%s covered fraction %.1f%% in %s is below 95%% of recording window.",
+                    sig_name,
+                    cov_frac * 100,
+                    night_path,
+                )
 
     summary: dict[str, Any] = {
         "night_dir": str(night_path),
@@ -271,11 +306,23 @@ def diagnose(night_dir: str | Path) -> dict[str, Any]:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Diagnose hr.csv and motion.csv in a night directory.")
-    parser.add_argument("night_dir", type=str, help="Path to raw night directory (e.g., data/raw/Bidslab00/3)")
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
+    parser = argparse.ArgumentParser(
+        description="Diagnose hr.csv and motion.csv in a night directory."
+    )
+    parser.add_argument(
+        "night_dir",
+        type=str,
+        help="Path to raw night directory (e.g., data/raw/Bidslab00/3)",
+    )
+    parser.add_argument(
+        "--allow-partial",
+        action="store_true",
+        help="Allow loading and diagnosing recordings with < 50% window coverage.",
+    )
     args = parser.parse_args()
 
-    diagnosis = diagnose(args.night_dir)
+    diagnosis = diagnose(args.night_dir, allow_partial=args.allow_partial)
     print(json.dumps(diagnosis, indent=2, default=str))
 
 

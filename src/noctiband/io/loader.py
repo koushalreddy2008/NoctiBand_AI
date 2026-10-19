@@ -50,6 +50,7 @@ def load_night(
     subject: str | None = None,
     night: str | None = None,
     rec_start: float | None = None,
+    allow_partial: bool = False,
 ) -> NightData:
     """Load wearable HR, motion, and expert sleep labels for a single night.
 
@@ -63,6 +64,9 @@ def load_night(
         Night identifier. Defaults to night_dir folder name.
     rec_start : float | None, optional
         Unix timestamp (seconds) at start of epoch 0. Required if labels.mat is missing.
+    allow_partial : bool, default=False
+        If False, raise ValueError if HR or motion covered fraction is below 50%
+        of the labeled recording window. If True, allow loading with a logged warning.
 
     Returns
     -------
@@ -194,6 +198,54 @@ def load_night(
                     first_ts,
                     rec_start_val,
                     diff,
+                )
+
+    # Coverage guard: covered_fraction = (last ts - first ts, clipped) / (n_epochs * 30)
+    if labels is not None and len(labels) > 0:
+        n_epochs = len(labels)
+        window_start = rec_start_val
+        window_end = rec_start_val + n_epochs * 30.0
+        window_dur = n_epochs * 30.0
+
+        for sig_name, df_sig in [("HR", df_hr), ("motion", df_motion)]:
+            if df_sig.empty:
+                covered_fraction = 0.0
+            else:
+                first_ts = float(df_sig["timestamp"].iloc[0])
+                last_ts = float(df_sig["timestamp"].iloc[-1])
+                clipped_first = max(first_ts, window_start)
+                clipped_last = min(last_ts, window_end)
+                span = max(0.0, clipped_last - clipped_first)
+                covered_fraction = span / window_dur
+
+            logger.info(
+                "%s coverage in %s/%s: %.2f%% (span=%.1fs, window=%.1fs)",
+                sig_name,
+                subject_id,
+                night_id,
+                covered_fraction * 100,
+                covered_fraction * window_dur,
+                window_dur,
+            )
+
+            if covered_fraction < 0.5:
+                if not allow_partial:
+                    raise ValueError(
+                        f"{sig_name} covered fraction {covered_fraction:.1%} in {night_path} "
+                        "is below 50% of the recording window. Set allow_partial=True to load."
+                    )
+                logger.warning(
+                    "%s covered fraction %.1f%% in %s is below 50%%, but allow_partial=True.",
+                    sig_name,
+                    covered_fraction * 100,
+                    night_path,
+                )
+            elif covered_fraction < 0.95:
+                logger.warning(
+                    "%s covered fraction %.1f%% in %s is below 95%% of recording window.",
+                    sig_name,
+                    covered_fraction * 100,
+                    night_path,
                 )
 
     return NightData(
