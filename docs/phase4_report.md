@@ -13,9 +13,10 @@
 - Tests: `python -m pytest -q -rs` -> 28 passed in 2.39s (100%).
 - Data Tests: `pytest -m data -rs` -> 2 passed, 26 deselected in 1.63s.
 
-## 3. Dataset Coverage & Truncated Tails
-Total: n_subjects=1, n_epochs=1928, n_wake=71 (Night 1: n_subjects=1, n_wake=36, n_epochs=935; Night 3: n_subjects=1, n_wake=35, n_epochs=993).
-Local motion missing: Night 1 = 99.25% (928/935), Night 3 = 98.69% (980/993); HR missing: Night 1 = 0.11% (1/935), Night 3 = 0.20% (2/993) [n_subjects=1, n_wake=71].
+## 3. Dataset Coverage & Data Integrity Correction
+- Total: n_subjects=1, n_epochs=1928, n_wake=71 (Night 1: n_wake=36, n_epochs=935; Night 3: n_wake=35, n_epochs=993).
+- **DATA INTEGRITY AUDIT**: Earlier verdict of "benign truncated tails" was **WRONG**. Local motion files are truncated downloads (1.07 MB & 1.64 MB vs ~100 MB expected).
+- The resulting epoch table had ~99% missing motion (Night 1: 99.25% missing; Night 3: 98.69% missing). All reported motion-feature behaviour is **invalid** until data is re-downloaded.
 
 | Night | Epoch | HR Count | HR Mean | Motion Count | Motion Mag | HR Miss | Motion Miss | Motion Part | Label |
 |:-----:|:-----:|:--------:|:-------:|:------------:|:----------:|:-------:|:-----------:|:-----------:|:-----:|
@@ -33,5 +34,5 @@ Local motion missing: Night 1 = 99.25% (928/935), Night 3 = 98.69% (980/993); HR
 | 3 | 992 | 0 | NaN | 0 | NaN | True | True | False | 1 (N1) |
 
 ## 4. Key Decisions & Open Questions
-- Decisions: Normalization uses per-night HR median/IQR only. Centered context (+-2, +-5) is valid offline. `hours_since_start` excluded.
-- Open Questions: When full benchmark motion files are downloaded, verify full 50 Hz motion across all epochs 0..990/933.
+- Decisions: Added coverage guards (< 50% raises ValueError) in `load_night` and `build_dataset`. Normalization uses per-night HR median/IQR only.
+- Open Questions: Re-run full feature pipeline after downloading verified full-night motion files.

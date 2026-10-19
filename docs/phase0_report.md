@@ -15,10 +15,10 @@
 ## 3. Summary of Audit and Motion Findings (<= 15 lines)
 1. `audit_epoching.md`: 0-based indexing `floor((t - recStart)/30)` and `reindex(range(n_epochs))` are valid and reused in `assign_epochs` and `epoch_coverage`.
 2. Previous pipeline had hard-coded flat paths, lacked timezone/DST guards, header autodetection, duplicate/NaN drop logging, and alignment guards.
-3. `motion_findings.md`: `hr.csv` has no header (0.2 Hz sampling); `motion.csv` has header `Timestamp,x,y,z` (50 Hz sampling, resting magnitude $\approx 1.002$ g in $g$ units). Both are strictly sorted with zero duplicate timestamps and zero internal gaps > 60 s.
-4. "Incomplete" verdict: Caused by a prior local aborted download (`motion.csv.partial`, 4.16 MB, ~18 min).
-5. On benchmark data, incomplete means **truncated end relative to the label window**: motion and HR end ~87 s before window end on Night 3 (epochs 991–992 zero readings, epoch 990 partial), and ~45 s before on Night 1 (epoch 934 zero readings, epoch 933 partial).
+3. `motion_findings.md`: `hr.csv` has no header (0.2 Hz sampling); `motion.csv` has header `Timestamp,x,y,z` (50 Hz sampling). Both are strictly sorted with zero duplicate timestamps.
+4. **CORRECTION (Data Integrity Audit)**: The previous verdict ("benign 1-2 epoch truncated tail") was **WRONG**. Local `motion.csv` files are truncated downloads saved under the real filename (Night 1: 1.07 MB, Night 3: 1.64 MB vs ~100 MB official release), covering only ~5–8 minutes (< 1.5% coverage) rather than the full overnight window.
+5. All reported motion-feature behaviour and downstream motion metrics are invalid until data is re-downloaded with SHA-256 verification.
 
 ## 4. Decisions & Open Questions
-- Decision: Use leave-one-night/leave-one-subject-out folds for Phase 4 split logic given single-subject availability.
-- Open question: For epochs with zero motion/HR at window boundaries (e.g. 991–992), emit NaN with missing flag; confirm downstream imputation strategy.
+- Decision: Enforce coverage guards in `load_night` (< 50% raises ValueError) to prevent truncated data from contaminating pipelines.
+- Open question: Re-download full 50 Hz motion data via `download_bidsleep.py` once network access is established.
