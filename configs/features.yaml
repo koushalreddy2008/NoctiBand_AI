@@ -1,0 +1,33 @@
+# NoctiBand AI - Feature Extraction Configuration
+# Offline 30-second epoch feature definitions for wearable HR and 3-axis motion.
+
+epoch_duration_s: 30
+
+hr:
+  delta: true
+  robust_norm: true
+  min_samples_per_epoch: 2
+  expected_samples_per_epoch: 6
+
+motion:
+  activity_threshold: 0.05
+  still_threshold: 0.02
+  high_activity_threshold: 0.15
+  min_samples_per_epoch: 500
+  expected_samples_per_epoch: 1500
+
+context:
+  windows:
+    - 2
+    - 5
+  features:
+    - hr_mean
+    - hr_mean_norm
+    - motion_mag_mean
+    - motion_enmo_mean
+
+time:
+  # Bias risk: time elapsed correlates with circadian rhythm and sleep architecture (e.g. REM density
+  # increases late in the sleep period). Including hours_since_start risks the model learning clock
+  # position rather than physiological state, failing on fragmented sleep or irregular schedules.
+  include_hours_since_start: false
