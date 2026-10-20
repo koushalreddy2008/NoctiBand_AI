@@ -30,7 +30,6 @@ import numpy as np
 import pandas as pd
 
 from noctiband.data_schema import standardize_columns, validate_epoch_table
-from noctiband.features.epoch_features import build_epoch_table
 from noctiband.types import EPOCH_S, NightData
 
 logger = logging.getLogger(__name__)
@@ -113,13 +112,21 @@ def load_subject_v2(
     # Map labels to internal coding
     mapped_labels = lbl_df["raw_stage"].map(RAW_LABEL_MAP).to_numpy(dtype=int)
 
-    # 2. Heart rate
+    # 2. Heart rate: deduplicate identical timestamps and sort monotonically
     hr_df = pd.read_csv(hr_file, header=None, names=["timestamp", "hr"])
-    hr_df = hr_df.sort_values("timestamp").reset_index(drop=True)
+    hr_df = (
+        hr_df.drop_duplicates(subset=["timestamp"], keep="first")
+        .sort_values("timestamp")
+        .reset_index(drop=True)
+    )
 
-    # 3. Motion
+    # 3. Motion: deduplicate identical timestamps and sort monotonically
     mot_df = pd.read_csv(mot_file, sep=r"\s+", header=None, names=["timestamp", "x", "y", "z"])
-    mot_df = mot_df.sort_values("timestamp").reset_index(drop=True)
+    mot_df = (
+        mot_df.drop_duplicates(subset=["timestamp"], keep="first")
+        .sort_values("timestamp")
+        .reset_index(drop=True)
+    )
 
     # 4. Coverage checks across labeled night window [0, n_epochs * 30)
     hr_cov = compute_epoch_coverage_fraction(hr_df["timestamp"].to_numpy(), n_epochs)
@@ -160,6 +167,8 @@ def build_subject_features_v2(
     min_coverage: float = 0.95,
 ) -> pd.DataFrame:
     """Load subject, extract epoch features, and format to canonical schema."""
+    from noctiband.features.epoch_features import build_epoch_table
+
     night = load_subject_v2(
         base_dir=base_dir,
         subject_id=subject_id,
@@ -209,6 +218,8 @@ def build_dataset_v2(
     lbl_dir = base_path / "labels"
     if not lbl_dir.exists():
         raise FileNotFoundError(f"Labels directory not found: {lbl_dir}")
+
+    from noctiband.features.epoch_features import build_epoch_table
 
     label_files = sorted(list(lbl_dir.glob("*_labeled_sleep.txt")))
     subjects = [f.name.split("_")[0] for f in label_files]
