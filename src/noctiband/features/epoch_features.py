@@ -403,6 +403,7 @@ def build_dataset(
     config: dict[str, Any] | str | Path | None = None,
     allow_low_motion: bool = False,
     allow_partial: bool = False,
+    skip_bad_nights: bool = False,
 ) -> pd.DataFrame:
     """Scan raw data directory, load all nights, extract features, and concatenate.
 
@@ -418,6 +419,8 @@ def build_dataset(
         If False, raise ValueError if any night's fraction of epochs with valid motion is < 50%.
     allow_partial : bool, default=False
         If False, raise ValueError if any night's HR or motion window coverage is < 50%.
+    skip_bad_nights : bool, default=False
+        If False, raise ValueError listing all failed nights. If True, log warnings and skip them.
 
     Returns
     -------
@@ -429,6 +432,8 @@ def build_dataset(
         raise FileNotFoundError(f"Raw data root directory not found: {raw_root}")
 
     tables: list[pd.DataFrame] = []
+    failed_nights: list[str] = []
+
     # Deterministic alphabetical ordering
     for subj_dir in sorted(raw_path.iterdir()):
         if not subj_dir.is_dir() or subj_dir.name.startswith("."):
@@ -437,6 +442,7 @@ def build_dataset(
             if not night_dir.is_dir() or night_dir.name.startswith("."):
                 continue
 
+            night_id_str = f"{subj_dir.name}/{night_dir.name}"
             try:
                 night_data = load_night(
                     night_dir,
@@ -454,9 +460,8 @@ def build_dataset(
                 )
 
                 logger.info(
-                    "Night %s/%s valid-motion fraction: %.2f%% (%d/%d epochs)",
-                    subj_dir.name,
-                    night_dir.name,
+                    "Night %s valid-motion fraction: %.2f%% (%d/%d epochs)",
+                    night_id_str,
                     valid_m_fraction * 100,
                     valid_m_count,
                     total_ep,
@@ -465,31 +470,30 @@ def build_dataset(
                 if valid_m_fraction < 0.5:
                     if not allow_low_motion:
                         raise ValueError(
-                            f"Night {subj_dir.name}/{night_dir.name} valid-motion fraction "
-                            f"{valid_m_fraction:.1%} is below 50% ({valid_m_count}/{total_ep} "
-                            f"epochs). Set allow_low_motion=True to allow."
+                            f"valid-motion fraction {valid_m_fraction:.1%} is below 50% "
+                            f"({valid_m_count}/{total_ep} epochs). Set allow_low_motion=True."
                         )
                     logger.warning(
-                        "Night %s/%s valid-motion fraction %.1f%% is below 50%%, but "
+                        "Night %s valid-motion fraction %.1f%% is below 50%%, but "
                         "allow_low_motion=True.",
-                        subj_dir.name,
-                        night_dir.name,
+                        night_id_str,
                         valid_m_fraction * 100,
                     )
 
                 tables.append(tbl)
-                logger.info(
-                    "Extracted %d epochs from %s/%s",
-                    len(tbl),
-                    subj_dir.name,
-                    night_dir.name,
-                )
+                logger.info("Extracted %d epochs from %s", len(tbl), night_id_str)
             except Exception as exc:
-                if isinstance(exc, ValueError) and (
-                    "below 50%" in str(exc) or "valid-motion fraction" in str(exc)
-                ):
-                    raise
-                logger.warning("Skipping night at %s: %s", night_dir, exc)
+                failed_nights.append(f"{night_id_str}: {exc}")
+
+    if failed_nights:
+        err_msg = (
+            f"Failed to process {len(failed_nights)} night(s) in {raw_root}:\n"
+            + "\n".join(f"  - {f}" for f in failed_nights)
+        )
+        if skip_bad_nights:
+            logger.warning("skip_bad_nights=True; skipping bad nights:\n%s", err_msg)
+        else:
+            raise ValueError(err_msg)
 
     if not tables:
         return pd.DataFrame(columns=METADATA_COLUMNS + FEATURE_COLUMNS + LABEL_COLUMNS)

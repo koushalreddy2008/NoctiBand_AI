@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from dataclasses import replace
 from pathlib import Path
 
@@ -321,12 +322,100 @@ def test_build_dataset_guard_low_motion(tmp_path: Path):
     (subj_night / "motion.csv").write_text("".join(motion_lines), encoding="utf-8")
 
     # Without allow_low_motion, must raise ValueError
-    with pytest.raises(ValueError, match="valid-motion fraction.*is below 50%"):
+    with pytest.raises(ValueError, match=r"Failed to process 1 night\(s\)"):
         build_dataset(raw_root, allow_low_motion=False, allow_partial=True)
 
     # With allow_low_motion=True, must succeed
     df = build_dataset(raw_root, allow_low_motion=True, allow_partial=True)
     assert len(df) == 10
+
+
+def test_build_dataset_error_reporting_and_skip(tmp_path: Path, caplog: pytest.LogCaptureFixture):
+    """Verify build_dataset collects all failures and supports skip_bad_nights."""
+    raw_root = tmp_path / "raw_multi"
+    from scipy.io import savemat
+
+    rec_start = 1638679229.0
+    labels = np.zeros(5, dtype=int)
+
+    # Valid night: subj1/night1
+    s1_n1 = raw_root / "subj1" / "1"
+    s1_n1.mkdir(parents=True, exist_ok=True)
+    savemat(
+        str(s1_n1 / "labels.mat"),
+        {
+            "recStart": np.array(["2021-12-04 23:40:29"], dtype="<U19"),
+            "expert_label": labels.reshape(-1, 1),
+        },
+    )
+    s1_hr = "".join(f"{rec_start + i * 35.0},65.0\n" for i in range(5))
+    (s1_n1 / "hr.csv").write_text(s1_hr, encoding="utf-8")
+    s1_m = "Timestamp,x,y,z\n" + "".join(f"{rec_start + i * 35.0},0.0,0.0,1.0\n" for i in range(5))
+    (s1_n1 / "motion.csv").write_text(s1_m, encoding="utf-8")
+
+    # Bad night 1: subj2/night1 has missing hr.csv
+    s2_n1 = raw_root / "subj2" / "1"
+    s2_n1.mkdir(parents=True, exist_ok=True)
+    savemat(
+        str(s2_n1 / "labels.mat"),
+        {
+            "recStart": np.array(["2021-12-04 23:40:29"], dtype="<U19"),
+            "expert_label": labels.reshape(-1, 1),
+        },
+    )
+    (s2_n1 / "motion.csv").write_text(s1_m, encoding="utf-8")
+
+    # Bad night 2: subj3/night1 has low motion (< 50%)
+    s3_n1 = raw_root / "subj3" / "1"
+    s3_n1.mkdir(parents=True, exist_ok=True)
+    savemat(
+        str(s3_n1 / "labels.mat"),
+        {
+            "recStart": np.array(["2021-12-04 23:40:29"], dtype="<U19"),
+            "expert_label": labels.reshape(-1, 1),
+        },
+    )
+    (s3_n1 / "hr.csv").write_text(s1_hr, encoding="utf-8")
+    # Only 1 reading at start, 0 elsewhere
+    (s3_n1 / "motion.csv").write_text(
+        f"Timestamp,x,y,z\n{rec_start},0.0,0.0,1.0\n{rec_start + 140.0},0.0,0.0,1.0\n",
+        encoding="utf-8",
+    )
+
+    # 1. skip_bad_nights=False: must raise ONE ValueError listing all bad nights
+    with pytest.raises(ValueError) as exc_info:
+        build_dataset(raw_root, skip_bad_nights=False, allow_partial=True)
+
+    err = str(exc_info.value)
+    assert "Failed to process 2 night(s)" in err
+    assert "subj2/1: hr.csv not found" in err
+    assert "subj3/1: valid-motion fraction" in err
+
+    # 2. skip_bad_nights=True: logs warning and successfully returns the 1 good night
+    with caplog.at_level(logging.WARNING):
+        df = build_dataset(raw_root, skip_bad_nights=True, allow_partial=True)
+
+    assert len(df) == 5
+    assert set(df["subject"].unique()) == {"subj1"}
+    assert any("skip_bad_nights=True; skipping bad nights" in r.message for r in caplog.records)
+
+
+EXPECTED_NIGHT1_MOTION_SHA256 = (
+    "1ff851c08a2e1186a0a3f0f703ffe54de7fd9a5078e49a792d01714564db9412"
+)
+EXPECTED_NIGHT3_MOTION_SHA256 = (
+    "7afec69f8cbb1bb41f5c45cf2c2e7c0332a468d510eb6495e082ca529bb2f817"
+)
+
+
+def _compute_sha256(path: Path) -> str:
+    import hashlib
+
+    h = hashlib.sha256()
+    with path.open("rb") as f:
+        while block := f.read(1 << 20):
+            h.update(block)
+    return h.hexdigest()
 
 
 @pytest.mark.data
@@ -336,12 +425,19 @@ def test_build_dataset_on_raw_data():
     if not raw_root.exists():
         pytest.skip("data/raw not present")
 
-    # Without allow_partial/allow_low_motion, must raise ValueError due to truncated benchmark slice
-    with pytest.raises(ValueError, match="(below 50%|valid-motion fraction)"):
-        build_dataset(raw_root, allow_low_motion=False, allow_partial=False)
+    m1 = raw_root / "Bidslab00" / "1" / "motion.csv"
+    m3 = raw_root / "Bidslab00" / "3" / "motion.csv"
 
-    # When allowed, loads the night
-    df = build_dataset(raw_root, allow_low_motion=True, allow_partial=True)
-    assert len(df) >= 993
-    assert "Bidslab00" in df["subject"].values
+    if (
+        not m1.exists()
+        or not m3.exists()
+        or _compute_sha256(m1) != EXPECTED_NIGHT1_MOTION_SHA256
+        or _compute_sha256(m3) != EXPECTED_NIGHT3_MOTION_SHA256
+    ):
+        pytest.skip("truncated or missing download")
+
+    df = build_dataset(raw_root)
+    assert len(df) == 993 + 935
+    assert set(df["subject"].unique()) == {"Bidslab00"}
+    assert set(df["night"].unique()) == {"1", "3"}
     assert list(df.columns) == METADATA_COLUMNS + FEATURE_COLUMNS + LABEL_COLUMNS
