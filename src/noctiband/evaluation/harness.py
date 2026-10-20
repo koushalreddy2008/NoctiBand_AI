@@ -17,6 +17,7 @@ from sklearn.metrics import (
     cohen_kappa_score,
     confusion_matrix,
     f1_score,
+    roc_auc_score,
 )
 from sklearn.model_selection import GroupKFold
 from sklearn.pipeline import Pipeline
@@ -75,10 +76,10 @@ def compute_metrics(
     if classes is None:
         classes = np.unique(np.concatenate([y_true, y_pred]))
 
-    macro_f1 = float(f1_score(y_true, y_pred, average="macro", zero_division=0))
+    macro_f1 = float(f1_score(y_true, y_pred, labels=classes, average="macro", zero_division=0))
     bal_acc = float(balanced_accuracy_score(y_true, y_pred))
     acc = float(accuracy_score(y_true, y_pred))
-    kappa = float(cohen_kappa_score(y_true, y_pred))
+    kappa = float(cohen_kappa_score(y_true, y_pred, labels=classes))
 
     # Wake F1 (Wake is class 0)
     wake_f1 = float(
@@ -94,8 +95,9 @@ def compute_metrics(
         else np.nan
     )
 
-    # Wake PR-AUC
+    # Wake PR-AUC & ROC-AUC
     wake_pr_auc = np.nan
+    wake_roc_auc = np.nan
     if y_prob is not None and 0 in classes:
         try:
             wake_idx = int(np.where(classes == 0)[0][0])
@@ -105,8 +107,11 @@ def compute_metrics(
                     wake_pr_auc = float(
                         average_precision_score(wake_true_binary, y_prob[:, wake_idx])
                     )
+                    wake_roc_auc = float(
+                        roc_auc_score(wake_true_binary, y_prob[:, wake_idx])
+                    )
         except Exception as exc:
-            logger.debug("Could not compute Wake PR-AUC: %s", exc)
+            logger.debug("Could not compute Wake AUCs: %s", exc)
 
     cm = confusion_matrix(y_true, y_pred, labels=classes).tolist()
 
@@ -117,6 +122,7 @@ def compute_metrics(
         "sleep_f1": round(sleep_f1, 4) if pd.notna(sleep_f1) else np.nan,
         "balanced_accuracy": round(bal_acc, 4),
         "cohen_kappa": round(kappa, 4),
+        "wake_roc_auc": round(wake_roc_auc, 4) if pd.notna(wake_roc_auc) else np.nan,
         "wake_pr_auc": round(wake_pr_auc, 4) if pd.notna(wake_pr_auc) else np.nan,
         "confusion_matrix": cm,
     }
@@ -237,29 +243,94 @@ def evaluate_cv(
         subj_fs_map = clean_df.groupby(CANONICAL_SUBJECT_COL)["sampling_rate"].first().to_dict()
         res_data["sampling_rate"] = [subj_fs_map.get(s, np.nan) for s in pred_subject_ids]
 
+    if pooled_probs is not None and 0 in classes:
+        wake_idx = int(np.where(classes == 0)[0][0])
+        res_data["y_prob_wake"] = pooled_probs[:, wake_idx]
+
     res_df = pd.DataFrame(res_data)
 
     subj_rows = []
     for subj_id, grp in res_df.groupby("subject"):
         sub_y_true = grp["y_true"].to_numpy()
         sub_y_pred = grp["y_pred"].to_numpy()
+        sub_n_wake = int((sub_y_true == 0).sum())
+        sub_fs = grp["sampling_rate"].iloc[0] if "sampling_rate" in grp.columns else np.nan
         row_dict: dict[str, Any] = {
             "subject": subj_id,
+            "sampling_rate": sub_fs,
+            "n_wake": sub_n_wake,
             "n_epochs": len(grp),
-            "n_wake": int((sub_y_true == 0).sum()),
+            "balanced_accuracy": round(
+                float(balanced_accuracy_score(sub_y_true, sub_y_pred)), 4
+            ),
+            "wake_f1": round(
+                float(
+                    f1_score(sub_y_true, sub_y_pred, labels=[0], average=None, zero_division=0)[0]
+                ),
+                4,
+            ),
+            "macro_f1": round(
+                float(
+                    f1_score(
+                        sub_y_true, sub_y_pred, labels=classes, average="macro", zero_division=0
+                    )
+                ),
+                4,
+            ),
         }
-        if "sampling_rate" in grp.columns:
-            row_dict["sampling_rate"] = grp["sampling_rate"].iloc[0]
 
-        row_dict["balanced_accuracy"] = round(
-            float(balanced_accuracy_score(sub_y_true, sub_y_pred)), 4
-        )
-        row_dict["macro_f1"] = round(
-            float(f1_score(sub_y_true, sub_y_pred, average="macro", zero_division=0)),
-            4,
-        )
+        if "y_prob_wake" in grp.columns and sub_n_wake > 0 and sub_n_wake < len(grp):
+            sub_w_true = (sub_y_true == 0).astype(int)
+            sub_w_prob = grp["y_prob_wake"].to_numpy()
+            try:
+                row_dict["wake_pr_auc"] = round(
+                    float(average_precision_score(sub_w_true, sub_w_prob)), 4
+                )
+            except Exception:
+                row_dict["wake_pr_auc"] = np.nan
+        else:
+            row_dict["wake_pr_auc"] = np.nan
+
         subj_rows.append(row_dict)
     per_subject_table = pd.DataFrame(subj_rows)
+
+    # Subject-level bootstrap 95% CIs for pooled macro-F1 and Wake PR-AUC
+    rng = np.random.default_rng(42)
+    boot_macro_f1s: list[float] = []
+    boot_wake_praucs: list[float] = []
+    sub_dict = {s: grp for s, grp in res_df.groupby("subject")}
+    unique_subs = list(sub_dict.keys())
+    n_subs = len(unique_subs)
+
+    for _ in range(1000):
+        sampled = rng.choice(unique_subs, size=n_subs, replace=True)
+        boot_sub_df = pd.concat([sub_dict[s] for s in sampled], ignore_index=True)
+        b_yt = boot_sub_df["y_true"].to_numpy()
+        b_yp = boot_sub_df["y_pred"].to_numpy()
+        boot_macro_f1s.append(
+            float(f1_score(b_yt, b_yp, labels=classes, average="macro", zero_division=0))
+        )
+        if "y_prob_wake" in boot_sub_df.columns:
+            b_wt = (b_yt == 0).astype(int)
+            b_wp = boot_sub_df["y_prob_wake"].to_numpy()
+            if len(np.unique(b_wt)) > 1:
+                boot_wake_praucs.append(float(average_precision_score(b_wt, b_wp)))
+
+    macro_f1_ci = (
+        round(float(np.percentile(boot_macro_f1s, 2.5)), 4),
+        round(float(np.percentile(boot_macro_f1s, 97.5)), 4),
+    )
+    wake_pr_auc_ci = (
+        (
+            round(float(np.percentile(boot_wake_praucs, 2.5)), 4),
+            round(float(np.percentile(boot_wake_praucs, 97.5)), 4),
+        )
+        if boot_wake_praucs
+        else (np.nan, np.nan)
+    )
+
+    pooled_metrics["macro_f1_ci_95"] = macro_f1_ci
+    pooled_metrics["wake_pr_auc_ci_95"] = wake_pr_auc_ci
 
     return EvaluationResult(
         estimator_name=est_name,
