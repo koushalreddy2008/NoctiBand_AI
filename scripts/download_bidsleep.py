@@ -17,6 +17,9 @@ BASE = "https://physionet.org/files/bidsleep-dataset/1.0.0/"
 CHUNK = 1 << 20
 
 
+PROGRESS_INTERVAL = 5 * (1 << 20)  # 5 MB
+
+
 def sha256_of(path: Path) -> str:
     h = hashlib.sha256()
     with path.open("rb") as f:
@@ -46,9 +49,25 @@ def download(session: requests.Session, rel: str, dest: Path, expected: str) -> 
             r.raise_for_status()
             if pos and r.status_code != 206:  # server ignored Range: restart
                 pos = 0
+            content_len = r.headers.get("Content-Length")
+            total = pos + int(content_len) if content_len is not None else None
+            done = pos
+            last_reported = done
+
             with part.open("ab" if pos else "wb") as f:
                 for chunk in r.iter_content(CHUNK):
                     f.write(chunk)
+                    done += len(chunk)
+                    if done - last_reported >= PROGRESS_INTERVAL:
+                        last_reported = done
+                        if total:
+                            pct = done / total * 100.0
+                            print(
+                                f"  progress: {done / (1 << 20):.1f} / "
+                                f"{total / (1 << 20):.1f} MB ({pct:.1f}%)"
+                            )
+                        else:
+                            print(f"  progress: {done / (1 << 20):.1f} MB")
     if sha256_of(part) != expected:
         part.unlink()
         raise RuntimeError(f"checksum mismatch for {rel}; partial deleted, rerun")
@@ -86,8 +105,7 @@ def main() -> int:
                 bad.append(rel)
                 continue
             if dest.exists():
-                print(tag, "corrupt, re-downloading", rel)
-                dest.unlink()
+                print(tag, "re-downloading (hash mismatch)", rel)
             else:
                 print(tag, "downloading", rel)
             download(s, rel, dest, h)
