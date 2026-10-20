@@ -292,17 +292,29 @@ def test_load_night_missing_csvs(tmp_path: Path):
         load_night(night_dir)
 
 
+EXPECTED_NIGHT3_MOTION_SHA256 = (
+    "7afec69f8cbb1bb41f5c45cf2c2e7c0332a468d510eb6495e082ca529bb2f817"
+)
+
+
+def _compute_sha256(path: Path) -> str:
+    import hashlib
+
+    h = hashlib.sha256()
+    with path.open("rb") as f:
+        while block := f.read(1 << 20):
+            h.update(block)
+    return h.hexdigest()
+
+
 @pytest.mark.data
 def test_load_night_integration_benchmark():
     night_dir = Path("data/raw/Bidslab00/3")
-    if not night_dir.exists():
-        pytest.skip(f"Integration data folder {night_dir} absent.")
+    motion_file = night_dir / "motion.csv"
+    if not motion_file.exists() or _compute_sha256(motion_file) != EXPECTED_NIGHT3_MOTION_SHA256:
+        pytest.skip("truncated or missing download")
 
-    # Without allow_partial, the coverage guard must raise ValueError on truncated benchmark slice
-    with pytest.raises(ValueError, match="below 50% of the recording window"):
-        load_night(night_dir, allow_partial=False)
-
-    data = load_night(night_dir, allow_partial=True)
+    data = load_night(night_dir)
     assert data.subject == "Bidslab00"
     assert data.night == "3"
     assert data.labels is not None
@@ -314,3 +326,12 @@ def test_load_night_integration_benchmark():
     assert counts.get(2, 0) == 451  # N2
     assert counts.get(3, 0) == 203  # N3
     assert counts.get(4, 0) == 239  # REM
+
+    # Motion covered fraction >= 0.95
+    n_epochs = len(data.labels)
+    window_start = data.rec_start
+    window_end = data.rec_start + n_epochs * 30.0
+    m_first = max(float(data.motion["timestamp"].iloc[0]), window_start)
+    m_last = min(float(data.motion["timestamp"].iloc[-1]), window_end)
+    m_cov = (m_last - m_first) / (n_epochs * 30.0)
+    assert m_cov >= 0.95
