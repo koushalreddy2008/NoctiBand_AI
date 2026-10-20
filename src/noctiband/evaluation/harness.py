@@ -11,6 +11,7 @@ import pandas as pd
 from sklearn.base import BaseEstimator
 from sklearn.impute import SimpleImputer
 from sklearn.metrics import (
+    accuracy_score,
     average_precision_score,
     balanced_accuracy_score,
     cohen_kappa_score,
@@ -76,6 +77,7 @@ def compute_metrics(
 
     macro_f1 = float(f1_score(y_true, y_pred, average="macro", zero_division=0))
     bal_acc = float(balanced_accuracy_score(y_true, y_pred))
+    acc = float(accuracy_score(y_true, y_pred))
     kappa = float(cohen_kappa_score(y_true, y_pred))
 
     # Wake F1 (Wake is class 0)
@@ -109,6 +111,7 @@ def compute_metrics(
     cm = confusion_matrix(y_true, y_pred, labels=classes).tolist()
 
     return {
+        "accuracy": round(acc, 4),
         "macro_f1": round(macro_f1, 4),
         "wake_f1": round(wake_f1, 4) if pd.notna(wake_f1) else np.nan,
         "sleep_f1": round(sleep_f1, 4) if pd.notna(sleep_f1) else np.nan,
@@ -225,32 +228,37 @@ def evaluate_cv(
     )
 
     # Per-subject breakdown table
-    res_df = pd.DataFrame(
-        {
-            "subject": pred_subject_ids,
-            "y_true": y_true_all,
-            "y_pred": y_pred_all,
-        }
-    )
+    res_data: dict[str, Any] = {
+        "subject": pred_subject_ids,
+        "y_true": y_true_all,
+        "y_pred": y_pred_all,
+    }
+    if "sampling_rate" in clean_df.columns:
+        subj_fs_map = clean_df.groupby(CANONICAL_SUBJECT_COL)["sampling_rate"].first().to_dict()
+        res_data["sampling_rate"] = [subj_fs_map.get(s, np.nan) for s in pred_subject_ids]
+
+    res_df = pd.DataFrame(res_data)
 
     subj_rows = []
     for subj_id, grp in res_df.groupby("subject"):
         sub_y_true = grp["y_true"].to_numpy()
         sub_y_pred = grp["y_pred"].to_numpy()
-        subj_rows.append(
-            {
-                "subject": subj_id,
-                "n_epochs": len(grp),
-                "n_wake": int((sub_y_true == 0).sum()),
-                "balanced_accuracy": round(
-                    float(balanced_accuracy_score(sub_y_true, sub_y_pred)), 4
-                ),
-                "macro_f1": round(
-                    float(f1_score(sub_y_true, sub_y_pred, average="macro", zero_division=0)),
-                    4,
-                ),
-            }
+        row_dict: dict[str, Any] = {
+            "subject": subj_id,
+            "n_epochs": len(grp),
+            "n_wake": int((sub_y_true == 0).sum()),
+        }
+        if "sampling_rate" in grp.columns:
+            row_dict["sampling_rate"] = grp["sampling_rate"].iloc[0]
+
+        row_dict["balanced_accuracy"] = round(
+            float(balanced_accuracy_score(sub_y_true, sub_y_pred)), 4
         )
+        row_dict["macro_f1"] = round(
+            float(f1_score(sub_y_true, sub_y_pred, average="macro", zero_division=0)),
+            4,
+        )
+        subj_rows.append(row_dict)
     per_subject_table = pd.DataFrame(subj_rows)
 
     return EvaluationResult(

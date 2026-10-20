@@ -66,12 +66,14 @@ BASE_FEATURE_COLUMNS: list[str] = [
     "motion_mag_max",
     "motion_enmo_mean",
     "motion_activity_count",
+    "motion_activity_fraction",
     "motion_fraction_still",
     "motion_coverage",
     "motion_missing",
     "motion_partial",
     "partial_motion",
     "epochs_since_last_high_activity",
+    "has_prior_activity",
     # Centered rolling context features (w=5)
     "hr_mean_roll_mean_w5",
     "hr_mean_roll_std_w5",
@@ -94,6 +96,58 @@ BASE_FEATURE_COLUMNS: list[str] = [
 
 # Standard exported FEATURE_COLUMNS allowlist
 FEATURE_COLUMNS: list[str] = list(BASE_FEATURE_COLUMNS)
+
+# QC and sample-count columns explicitly excluded from model inputs
+QC_FEATURE_COLUMNS: list[str] = [
+    "hr_count",
+    "motion_count",
+    "hr_coverage",
+    "motion_coverage",
+    "hr_missing",
+    "motion_missing",
+    "hr_partial",
+    "motion_partial",
+    "partial_motion",
+    "motion_activity_count",  # Excluded because it scales with sampling rate
+]
+
+# Explicit model input features (leakage-free, sampling-rate invariant, QC excluded)
+MODEL_FEATURES: list[str] = [
+    # HR base features
+    "hr_mean",
+    "hr_std",
+    "hr_min",
+    "hr_max",
+    "hr_range",
+    "hr_last_minus_first",
+    "hr_mean_norm",
+    "hr_delta",
+    # Motion base features (sampling-rate invariant per-sample fractions/magnitudes)
+    "motion_mag_mean",
+    "motion_mag_std",
+    "motion_mag_max",
+    "motion_enmo_mean",
+    "motion_activity_fraction",
+    "motion_fraction_still",
+    # Centered rolling context features (w=5)
+    "hr_mean_roll_mean_w5",
+    "hr_mean_roll_std_w5",
+    "hr_mean_norm_roll_mean_w5",
+    "hr_mean_norm_roll_std_w5",
+    "motion_mag_mean_roll_mean_w5",
+    "motion_mag_mean_roll_std_w5",
+    "motion_enmo_mean_roll_mean_w5",
+    "motion_enmo_mean_roll_std_w5",
+    # Centered rolling context features (w=11)
+    "hr_mean_roll_mean_w11",
+    "hr_mean_roll_std_w11",
+    "hr_mean_norm_roll_mean_w11",
+    "hr_mean_norm_roll_std_w11",
+    "motion_mag_mean_roll_mean_w11",
+    "motion_mag_mean_roll_std_w11",
+    "motion_enmo_mean_roll_mean_w11",
+    "motion_enmo_mean_roll_std_w11",
+]
 
 
 def load_feature_config(config: dict[str, Any] | str | Path | None = None) -> dict[str, Any]:
@@ -166,7 +220,6 @@ def build_epoch_table(
     min_motion_samples = int(motion_cfg.get("min_samples_per_epoch", 500))
     activity_threshold = float(motion_cfg.get("activity_threshold", 0.05))
     still_threshold = float(motion_cfg.get("still_threshold", 0.02))
-    high_activity_threshold = float(motion_cfg.get("high_activity_threshold", 0.15))
 
     # Determine total epochs in recording
     if night.labels is not None:
@@ -271,6 +324,7 @@ def build_epoch_table(
         m_mag_max_s = m_grp["mag"].max()
         m_enmo_mean_s = m_grp["enmo"].mean()
         m_act_count_s = m_grp["is_active"].sum()
+        m_act_frac_s = m_grp["is_active"].mean()
         m_still_frac_s = m_grp["is_still"].mean()
 
         df["motion_count"] = m_count_s.reindex(epochs, fill_value=0).astype(int).to_numpy()
@@ -279,6 +333,7 @@ def build_epoch_table(
         df["motion_mag_max"] = m_mag_max_s.reindex(epochs).to_numpy()
         df["motion_enmo_mean"] = m_enmo_mean_s.reindex(epochs).to_numpy()
         df["motion_activity_count"] = m_act_count_s.reindex(epochs).to_numpy()
+        df["motion_activity_fraction"] = m_act_frac_s.reindex(epochs).to_numpy()
         df["motion_fraction_still"] = m_still_frac_s.reindex(epochs).to_numpy()
     else:
         df["motion_count"] = 0
@@ -287,6 +342,7 @@ def build_epoch_table(
         df["motion_mag_max"] = np.nan
         df["motion_enmo_mean"] = np.nan
         df["motion_activity_count"] = np.nan
+        df["motion_activity_fraction"] = np.nan
         df["motion_fraction_still"] = np.nan
 
     # Zero-reading validity guard (Amendment 2: Emit NaN for epochs without valid motion)
@@ -296,6 +352,7 @@ def build_epoch_table(
     df.loc[zero_motion_mask, "motion_mag_max"] = np.nan
     df.loc[zero_motion_mask, "motion_enmo_mean"] = np.nan
     df.loc[zero_motion_mask, "motion_activity_count"] = np.nan
+    df.loc[zero_motion_mask, "motion_activity_fraction"] = np.nan
     df.loc[zero_motion_mask, "motion_fraction_still"] = np.nan
 
     # Motion quality and missing flags
@@ -304,24 +361,34 @@ def build_epoch_table(
     df["motion_partial"] = (df["motion_count"] > 0) & (df["motion_count"] < min_motion_samples)
     df["partial_motion"] = df["motion_partial"].copy()
 
-    # Distance since last high activity epoch
+    # Recalibrate high activity from per-sample active fraction (default threshold 0.10, cap 120)
+    high_activity_fraction = float(motion_cfg.get("high_activity_fraction", 0.10))
+    max_epoch_cap = float(motion_cfg.get("max_high_activity_epoch_cap", 120.0))
+
     epochs_since_last_high = np.full(n_epochs, np.nan, dtype=float)
+    has_prior_activity = np.zeros(n_epochs, dtype=bool)
     last_high_idx: int | None = None
+
     for i in range(n_epochs):
         if df["motion_missing"].iloc[i]:
             epochs_since_last_high[i] = np.nan
+            has_prior_activity[i] = last_high_idx is not None
             continue
 
-        enmo_val = df["motion_enmo_mean"].iloc[i]
-        if pd.notna(enmo_val) and enmo_val >= high_activity_threshold:
+        act_frac_val = df["motion_activity_fraction"].iloc[i]
+        if pd.notna(act_frac_val) and act_frac_val >= high_activity_fraction:
             last_high_idx = i
             epochs_since_last_high[i] = 0.0
+            has_prior_activity[i] = True
         elif last_high_idx is not None:
-            epochs_since_last_high[i] = float(i - last_high_idx)
+            epochs_since_last_high[i] = min(float(i - last_high_idx), max_epoch_cap)
+            has_prior_activity[i] = True
         else:
             epochs_since_last_high[i] = np.nan
+            has_prior_activity[i] = False
 
     df["epochs_since_last_high_activity"] = epochs_since_last_high
+    df["has_prior_activity"] = has_prior_activity
 
     # 4. Centered Rolling Context Features (Offline future context valid)
     radius_windows = context_cfg.get("windows", [2, 5])
