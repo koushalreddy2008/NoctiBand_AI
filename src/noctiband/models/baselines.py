@@ -42,15 +42,23 @@ class MotionThresholdBaseline(BaseEstimator, ClassifierMixin):
     For multi-class, predicts Wake (0) when above threshold and NREM (1) below.
     """
 
-    def __init__(self, feature_idx: int = 0):
+    def __init__(self, feature_idx: int | None = None):
         self.feature_idx = feature_idx
+
+    def _get_effective_idx(self, n_features: int) -> int:
+        if self.feature_idx is not None:
+            return min(self.feature_idx, n_features - 1)
+        # In MODEL_FEATURES, motion_mag_mean is at index 8; fallback to 0 for small fixtures
+        return 8 if n_features > 8 else 0
 
     def fit(self, X, y):
         X_arr = np.asarray(X)
         y_arr = np.asarray(y)
         self.classes_ = np.unique(y_arr)
+        idx = self._get_effective_idx(X_arr.shape[1])
+        self.effective_idx_ = idx
 
-        feature_vals = X_arr[:, self.feature_idx]
+        feature_vals = X_arr[:, idx]
         finite_mask = np.isfinite(feature_vals)
         if not finite_mask.any():
             self.threshold_ = 0.0
@@ -82,7 +90,8 @@ class MotionThresholdBaseline(BaseEstimator, ClassifierMixin):
 
     def predict(self, X):
         X_arr = np.asarray(X)
-        vals = X_arr[:, self.feature_idx]
+        idx = getattr(self, "effective_idx_", self._get_effective_idx(X_arr.shape[1]))
+        vals = X_arr[:, idx]
         # Predict Wake (0) if > threshold, else Sleep (1)
         preds = np.where(vals > self.threshold_, 0, 1)
 
@@ -95,7 +104,8 @@ class MotionThresholdBaseline(BaseEstimator, ClassifierMixin):
 
     def predict_proba(self, X):
         X_arr = np.asarray(X)
-        vals = X_arr[:, self.feature_idx]
+        idx = getattr(self, "effective_idx_", self._get_effective_idx(X_arr.shape[1]))
+        vals = X_arr[:, idx]
         diff = vals - self.threshold_
         # Logistic sigmoid probability of Wake (class 0)
         p_wake = 1.0 / (1.0 + np.exp(-np.clip(diff, -10.0, 10.0)))
