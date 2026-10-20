@@ -68,19 +68,16 @@ class MotionThresholdBaseline(BaseEstimator, ClassifierMixin):
         valid_y = y_arr[finite_mask]
 
         # Candidate thresholds from quantiles
-        quantiles = np.linspace(0.1, 0.9, 25)
+        quantiles = np.linspace(0.01, 0.99, 100)
         candidates = np.quantile(valid_vals, quantiles)
 
         best_score = -1.0
         best_thresh = float(np.median(valid_vals))
 
-        # Binary targets: 0 = Wake, >0 = Sleep
-        target_wake = (valid_y == 0).astype(int)
-
         for thresh in candidates:
-            # Predict Wake (1 for target_wake) if feature > thresh
-            pred_wake = (valid_vals > thresh).astype(int)
-            score = balanced_accuracy_score(target_wake, pred_wake)
+            # Predict Wake (0) if feature > thresh, else Sleep (1)
+            preds = np.where(valid_vals > thresh, 0, 1)
+            score = balanced_accuracy_score(valid_y, preds)
             if score > best_score:
                 best_score = score
                 best_thresh = float(thresh)
