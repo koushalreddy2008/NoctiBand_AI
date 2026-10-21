@@ -1,0 +1,103 @@
+{
+  "model_name": "NoctiBand Sleep Stager",
+  "version": "v0.1",
+  "architecture": "SimpleImputer(median) -> StandardScaler -> LogisticRegression",
+  "features": [
+    "hr_mean",
+    "hr_std",
+    "hr_min",
+    "hr_max",
+    "hr_range",
+    "hr_last_minus_first",
+    "hr_mean_norm",
+    "hr_delta",
+    "motion_mag_mean",
+    "motion_mag_std",
+    "motion_mag_max",
+    "motion_enmo_mean",
+    "motion_activity_fraction",
+    "motion_fraction_still",
+    "hr_mean_roll_mean_w5",
+    "hr_mean_roll_std_w5",
+    "hr_mean_norm_roll_mean_w5",
+    "hr_mean_norm_roll_std_w5",
+    "motion_mag_mean_roll_mean_w5",
+    "motion_mag_mean_roll_std_w5",
+    "motion_enmo_mean_roll_mean_w5",
+    "motion_enmo_mean_roll_std_w5",
+    "hr_mean_roll_mean_w11",
+    "hr_mean_roll_std_w11",
+    "hr_mean_norm_roll_mean_w11",
+    "hr_mean_norm_roll_std_w11",
+    "motion_mag_mean_roll_mean_w11",
+    "motion_mag_mean_roll_std_w11",
+    "motion_enmo_mean_roll_mean_w11",
+    "motion_enmo_mean_roll_std_w11"
+  ],
+  "n_features": 30,
+  "target_mapping": {
+    "0": "Wake",
+    "1": "Sleep"
+  },
+  "optimal_wake_threshold": 0.85,
+  "smoothing_window_size": 1,
+  "training_cohort": {
+    "n_subjects": 22,
+    "n_epochs": 18187,
+    "n_wake": 1516,
+    "cohort_hash": "e130cce7859e386a",
+    "train_val_subjects": [
+      "1360686",
+      "1818471",
+      "2638030",
+      "3509524",
+      "3997827",
+      "4018081",
+      "4314139",
+      "46343",
+      "5132496",
+      "5383425",
+      "5498603",
+      "6220552",
+      "759667",
+      "781756",
+      "8000685",
+      "8173033",
+      "8258170",
+      "844359",
+      "8686948",
+      "8692923",
+      "9618981",
+      "9961348"
+    ]
+  },
+  "held_out_test_split": {
+    "test_subjects": [
+      "9106476",
+      "1455390",
+      "5797046",
+      "4426783"
+    ],
+    "n_epochs": 3835,
+    "n_wake": 320,
+    "metrics": {
+      "accuracy": 0.9301,
+      "balanced_accuracy": 0.6466,
+      "macro_f1": 0.6926,
+      "wake_f1": 0.4224,
+      "cohen_kappa": 0.3909,
+      "wake_roc_auc": 0.7709,
+      "wake_pr_auc": 0.4826,
+      "confusion_matrix": [
+        [
+          98,
+          222
+        ],
+        [
+          46,
+          3469
+        ]
+      ]
+    }
+  }
+}
