@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -21,9 +22,25 @@ class NightData:
     rec_start: float            # unix s at the start of epoch 0
 
 
+class QualityControlError(ValueError):
+    """Raised when data quality or signal coverage fails quality control guards."""
+
+    pass
+
+
 @dataclass(frozen=True)
 class NightPrediction:
     rec_start: float
     epoch_labels: np.ndarray    # internal coding: 0 = wake, 1 = sleep
-    probs: np.ndarray | None    # P(sleep) per epoch
+    probs: np.ndarray | None    # P(sleep) per epoch (or (N, C) probabilities)
     coverage: np.ndarray        # fraction of the epoch with valid HR/motion, 0..1
+    epoch_timestamps: np.ndarray | None = None
+    qc_summary: dict[str, Any] | None = None
+
+    @property
+    def hypnogram(self) -> np.ndarray:
+        return self.epoch_labels
+
+    @property
+    def probabilities(self) -> np.ndarray | None:
+        return self.probs
