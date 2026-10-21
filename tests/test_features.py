@@ -421,6 +421,19 @@ def _compute_sha256(path: Path) -> str:
 @pytest.mark.data
 def test_build_dataset_on_raw_data():
     """Verify build_dataset behavior on raw benchmark data."""
+    # If verified local dataset v2 is present, test against verified local data
+    raw_v2_dir = Path("data/raw_v2")
+    if raw_v2_dir.exists():
+        from noctiband.io.adapter_v2 import build_subject_features_v2
+
+        df = build_subject_features_v2(raw_v2_dir, "1360686", min_coverage=0.95)
+        assert len(df) == 968
+        assert set(df["subject_id"].unique()) == {"1360686"}
+        assert "motion_mag_mean" in df.columns
+        assert "hr_mean" in df.columns
+        assert "label_binary" in df.columns
+        return
+
     raw_root = Path("data/raw")
     if not raw_root.exists():
         pytest.skip("data/raw not present")
