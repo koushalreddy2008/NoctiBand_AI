@@ -78,9 +78,13 @@ def test_recompute_metrics_from_confusion_matrices() -> None:
 
     target_models = [
         "pred_weak_motion_binary",
-        "pred_lr_hr_binary",
+        "pred_ref_motion_binary",
         "pred_lr_motion_binary",
+        "pred_lr_hr_binary",
+        "pred_lr_fixed_binary",
+        "pred_lr_tuned_binary",
         "pred_rf_fixed_binary",
+        "pred_rf_tuned_binary",
     ]
 
     for col in target_models:
@@ -120,6 +124,34 @@ def test_recompute_metrics_from_confusion_matrices() -> None:
         np.testing.assert_allclose(mf1_direct, mf1_cm, atol=1e-4)
         np.testing.assert_allclose(wf1_direct, wf1_cm, atol=1e-4)
         np.testing.assert_allclose(kappa_direct, kappa_cm, atol=1e-4)
+
+
+def test_recompute_3class_metrics_from_confusion_matrices() -> None:
+    """Assert 3-class Bal Acc, Macro-F1, and Kappa strictly equal matrix_metrics."""
+    oof_path = Path("data/processed/oof_predictions_phase10.csv")
+    df_oof = pd.read_csv(oof_path)
+    y_3c = df_oof["y_true_3class"].to_numpy()
+
+    target_3c = [
+        "pred_3class_majority",
+        "pred_lr_3class",
+        "pred_rf_3class",
+    ]
+
+    for col in target_3c:
+        y_pred = df_oof[col].to_numpy()
+        cm = confusion_matrix(y_3c, y_pred, labels=[0, 1, 2])
+        m_calc = matrix_metrics(cm, [0, 1, 2])
+
+        acc_direct = accuracy_score(y_3c, y_pred)
+        bal_acc_direct = balanced_accuracy_score(y_3c, y_pred)
+        mf1_direct = f1_score(y_3c, y_pred, average="macro")
+        kappa_direct = cohen_kappa_score(y_3c, y_pred)
+
+        np.testing.assert_allclose(acc_direct, m_calc["accuracy"], atol=1e-4)
+        np.testing.assert_allclose(bal_acc_direct, m_calc["balanced_accuracy"], atol=1e-4)
+        np.testing.assert_allclose(mf1_direct, m_calc["macro_f1"], atol=1e-4)
+        np.testing.assert_allclose(kappa_direct, m_calc["cohen_kappa"], atol=1e-4)
 
 
 def test_inner_cv_threshold_selection_never_accesses_validation_fold() -> None:
