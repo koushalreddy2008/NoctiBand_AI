@@ -309,6 +309,21 @@ def _compute_sha256(path: Path) -> str:
 
 @pytest.mark.data
 def test_load_night_integration_benchmark():
+    # If verified local dataset v2 is present, test against verified local data
+    raw_v2_dir = Path("data/raw_v2")
+    if raw_v2_dir.exists():
+        from noctiband.io.adapter_v2 import load_subject_v2
+
+        data = load_subject_v2(raw_v2_dir, "1360686", min_coverage=0.95)
+        assert data.subject == "1360686"
+        assert data.night == "1"
+        assert data.labels is not None
+        assert len(data.labels) == 968
+        assert len(data.hr) > 0
+        assert len(data.motion) > 0
+        assert (data.labels == 0).sum() == 117
+        return
+
     night_dir = Path("data/raw/Bidslab00/3")
     motion_file = night_dir / "motion.csv"
     if not motion_file.exists() or _compute_sha256(motion_file) != EXPECTED_NIGHT3_MOTION_SHA256:

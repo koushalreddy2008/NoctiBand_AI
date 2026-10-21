@@ -665,10 +665,15 @@ The Phase 8 numbers are the correct measured values; the Phase 9 table transpose
             med_roc, min_roc, max_roc = np.median(null_rocs), np.min(null_rocs), np.max(null_rocs)
             med_pr, min_pr, max_pr = np.median(null_prs), np.min(null_prs), np.max(null_prs)
 
-            # Strict rule: No "evidence of bias" label unless (a) lies outside [min, max] of (b)
-            roc_outside = (roc_a < min_roc) or (roc_a > max_roc)
-            pr_outside = (pr_a < min_pr) or (pr_a > max_pr)
-            bias_label = "evidence of rate bias" if (roc_outside or pr_outside) else "no evidence of rate bias"
+            # Strict rule: require BOTH observed metric outside null [min, max] AND bootstrap CI excluding null median
+            roc_outside_null = (roc_a < min_roc) or (roc_a > max_roc)
+            roc_ci_excludes_med = (med_roc < ci_roc[0]) or (med_roc > ci_roc[1])
+            pr_outside_null = (pr_a < min_pr) or (pr_a > max_pr)
+            pr_ci_excludes_med = (med_pr < ci_pr[0]) or (med_pr > ci_pr[1])
+
+            has_roc_bias = roc_outside_null and roc_ci_excludes_med
+            has_pr_bias = pr_outside_null and pr_ci_excludes_med
+            bias_label = "evidence of rate bias" if (has_roc_bias or has_pr_bias) else "no evidence of rate bias"
 
             results.append({
                 "Subject": target_sub,
