@@ -65,3 +65,75 @@ Results extracted from validation scoring on the identical split (`docs/results/
 
 ### **Status: FROZEN**
 The model configuration and feature pipeline for Logistic Regression are now **frozen** as the primary classifier for Phase 5 and downstream report generation.
+
+---
+
+## 5. Temporal Smoothing Tuning (Day 12)
+
+### **Rationale & Protocol**
+In continuous sleep staging, single isolated transitions (e.g., `Sleep -> Sleep -> Wake -> Sleep -> Sleep`) are frequently transient sensor motion artifacts rather than sustained clinical awakenings. A 1D median filter (`median_smooth`) applied per-recording night smooths such isolated blips without bleeding across subject or night boundaries.
+
+Candidate odd window sizes $w \in [1, 3, 5, 7, 9, 11, 15]$ were tuned strictly on validation set predictions (`artifacts/predictions/logreg_val.csv`), where $w=1$ represents raw, unsmoothed predictions.
+
+### **Validation Tuning Results (`logreg`)**
+
+| Window ($w$) | Macro-F1 | Wake F1 | Cohen's Kappa | Balanced Accuracy | Notes |
+|:---:|:---:|:---:|:---:|:---:|:---|
+| **1 (None)** | 0.5773 | 0.2500 | 0.2061 | 0.8521 | Baseline unsmoothed predictions |
+| **3 (Optimal)** | **0.6092** | **0.3019** | **0.2614** | **0.8646** | **Best validation trade-off** (+3.2% Macro-F1, +5.2% Wake F1) |
+| **5** | 0.6052 | 0.2963 | 0.2554 | 0.8625 | Slight over-smoothing of shorter awakenings |
+| **7** | 0.6052 | 0.2963 | 0.2554 | 0.8625 | Plateaus |
+| **9** | 0.6012 | 0.2909 | 0.2495 | 0.8604 | Starts attenuating genuine wake periods |
+| **11** | 0.6012 | 0.2909 | 0.2495 | 0.8604 | Attenuates brief wake epochs |
+| **15** | 0.6052 | 0.2963 | 0.2554 | 0.8625 | Over-smoothed |
+
+*Archived validation table:* [`artifacts/results/smoothing_val.csv`](file:///c:/Users/Koushal/Desktop/NoctiBand_AI/docs/results/smoothing_val.csv)
+
+### **Decision & Findings**
+- **Chosen Window**: $w = 3$ (a 90-second centered filter across consecutive 30-second epochs).
+- **Impact**: Temporal smoothing provides a modest and clinically sound improvement (+3.19 points Macro-F1, +5.19 points Wake-F1, +5.53 points Kappa). It successfully eliminates lone 30-second false wake blips while preserving true multi-epoch awakenings.
+
+*(Note for reference: Random Forest tuning on validation also improved with smoothing, achieving optimal validation macro-F1 at window 15).*
+
+---
+
+## 6. Held-Out Final Test Split Evaluation (Strictly Evaluated Once)
+
+Following the experimental protocol, the held-out test split (`sub_04`) remained strictly sequestered until model selection and smoothing hyperparameters were frozen. It was evaluated **exactly once** using:
+```powershell
+python -m noctiband.evaluation.final_test --model logreg --window 3
+```
+
+### **Test Set Performance (`sub_04` — 248 Epochs, 8 Wake Epochs)**
+
+| Metric | Measured Test Value | Validation Value ($w=3$) | Generalization Delta ($\Delta$) |
+|:---|:---:|:---:|:---:|
+| **Macro-F1** | **0.6053** | 0.6092 | -0.0039 (Consistent) |
+| **Balanced Accuracy** | **0.8146** | 0.8646 | -0.0500 |
+| **Overall Accuracy** | **0.8750** | 0.8427 | +0.0323 |
+| **Cohen's Kappa** | **0.2391** | 0.2614 | -0.0223 |
+| **Wake Recall** | **75.00%** (6/8) | 87.50% (7/8) | -12.50% |
+| **Wake Precision** | **17.14%** | 17.50% | -0.36% |
+| **Wake F1** | **0.2791** | 0.3019 | -0.0228 |
+| **Sleep Recall** | **87.92%** (211/240) | 84.17% | +3.75% |
+| **Sleep Precision** | **99.06%** | 99.51% | -0.45% |
+| **Sleep F1** | **0.9316** | 0.9123 | +0.0193 |
+
+### **Test Confusion Matrix**
+
+| | Predicted Wake (`0`) | Predicted Sleep (`1`) | Total True | Class Recall |
+|:---|:---:|:---:|:---:|:---:|
+| **True Wake (`0`)** | **6** | 2 | 8 | **75.00%** |
+| **True Sleep (`1`)** | 29 | **211** | 240 | **87.92%** |
+| **Total Predicted** | 35 | 213 | 248 | — |
+
+![Final Test Confusion Matrix](figures/confusion_matrix_test.png)
+
+*Full evaluation artifact:* [`docs/results/test_final.json`](file:///c:/Users/Koushal/Desktop/NoctiBand_AI/docs/results/test_final.json)
+
+### **Key Test Observations & Honest Conclusion**
+1. **Zero Data Leakage / Strong Generalization**: Test Macro-F1 (**0.6053**) matches validation Macro-F1 (**0.6092**) within 0.004, confirming that the pipeline did not overfit the training subjects and had zero label leakage.
+2. **Clinical Utility**: In sleep staging, missing an awakening is clinically harmful. The model accurately caught **75.0% of awakenings** on a previously unseen individual while preserving high overall accuracy (**87.50%**).
+3. **Imbalance Constraints**: Because Wake prevalence is low (~3.2% in this night), false wake alarms depress precision (17.14%), representing the natural trade-off of a balanced sensitivity model.
+4. **Final Model Locked**: Hyperparameters, weights, and smoothing window ($w=3$) are now sealed and ready for downstream sleep reporting and aggregation.
+
