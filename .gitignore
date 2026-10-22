@@ -220,4 +220,6 @@ __marimo__/
 .venv/
 data/
 artifacts/models/
+artifacts/predictions/
+artifacts/results/
 .ipynb_checkpoints/
