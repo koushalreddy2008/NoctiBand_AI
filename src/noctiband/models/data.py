@@ -14,7 +14,13 @@ def load_table(path=None):
 
 
 def feature_columns(df):
-    return [c for c in df.columns if c.startswith(FEATURE_PREFIXES)]
+    return [
+        c
+        for c in df.columns
+        if c.startswith(FEATURE_PREFIXES)
+        and c != "q_flag"
+        and pd.api.types.is_numeric_dtype(df[c])
+    ]
 
 
 def load_split(path=None):
