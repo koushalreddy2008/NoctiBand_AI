@@ -12,7 +12,7 @@ from src.io.loader import load_night
 from src.preprocessing.epoching import align_night_to_epochs
 
 ROOT = Path(__file__).resolve().parent.parent
-RAW_DIR = ROOT / "data" / "raw"
+RAW_DIR = ROOT / "data" / "raw" / "Bidslab00" / "3"
 
 
 @pytest.mark.skipif(not (RAW_DIR / "labels.mat").is_file(), reason="Raw dataset not found")
@@ -28,7 +28,7 @@ def test_end_to_end_bidsleep_night():
 
     # Check stage counts match data notes exactly
     unique, counts = np.unique(rec.labels, return_counts=True)
-    stage_counts = dict(zip(unique, counts))
+    stage_counts = dict(zip(unique, counts, strict=True))
     assert stage_counts[SleepStage.WAKE] == 35
     assert stage_counts[SleepStage.N1] == 65
     assert stage_counts[SleepStage.N2] == 451

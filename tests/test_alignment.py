@@ -63,7 +63,8 @@ def test_epoch_to_datetimes():
 def test_audit_signal_alignment():
     rec_start = 1000.0
     # 5 total epochs: [0, 1, 2, 3, 4]
-    # Epoch 0: 1000-1030, Epoch 1: 1030-1060, Epoch 2: 1060-1090, Epoch 3: 1090-1120, Epoch 4: 1120-1150
+    # Epoch 0: 1000-1030, Epoch 1: 1030-1060, Epoch 2: 1060-1090
+    # Epoch 3: 1090-1120, Epoch 4: 1120-1150
     df = pd.DataFrame(
         {
             "timestamp": [

@@ -51,8 +51,9 @@ def evaluate(
         }
         for i, name in enumerate(names)
     }
+    macro_f1 = float(f1_score(y_true, y_pred, labels=labels, average="macro", zero_division=0))
     return {
-        "macro_f1": float(f1_score(y_true, y_pred, labels=labels, average="macro", zero_division=0)),
+        "macro_f1": macro_f1,
         "balanced_accuracy": float(balanced_accuracy_score(y_true, y_pred)),
         "kappa": float(cohen_kappa_score(y_true, y_pred)),
         "accuracy": float(accuracy_score(y_true, y_pred)),

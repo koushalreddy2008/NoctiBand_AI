@@ -8,7 +8,7 @@ signal quality, and epoched data.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from enum import Enum, IntEnum
+from enum import IntEnum, StrEnum
 from typing import Any
 
 import numpy as np
@@ -70,7 +70,7 @@ class SleepStage(IntEnum):
         return None
 
 
-class SignalQuality(str, Enum):
+class SignalQuality(StrEnum):
     """Signal quality classification flags for 30-second epochs."""
 
     GOOD = "GOOD"
