@@ -8,6 +8,7 @@ with signal quality verification, label mapping, and physiological feature summa
 from __future__ import annotations
 
 import logging
+from collections.abc import Iterator
 from typing import Any
 
 import numpy as np
@@ -39,7 +40,38 @@ class EpochAligner:
         self,
         recording: NightRecording,
         preserve_slices: bool = False,
+        chunk_size_epochs: int | None = None,
     ) -> EpochedNight:
+        if (
+            chunk_size_epochs is not None
+            and chunk_size_epochs > 0
+            and chunk_size_epochs < recording.total_epochs
+        ):
+            chunks = list(
+                iter_align_night_chunks(
+                    recording=recording,
+                    chunk_size_epochs=chunk_size_epochs,
+                    epoch_duration_sec=self.epoch_duration_sec,
+                    preserve_slices=preserve_slices,
+                )
+            )
+            if chunks:
+                merged_df = pd.concat([c.epochs_df for c in chunks], ignore_index=True)
+                merged_df["epoch"] = np.arange(len(merged_df), dtype=int)
+                slices: dict[int, dict[str, pd.DataFrame]] | None = {} if preserve_slices else None
+                if preserve_slices and slices is not None:
+                    for c in chunks:
+                        if c.raw_slices:
+                            slices.update(c.raw_slices)
+                return EpochedNight(
+                    subject_id=recording.subject_id,
+                    night_id=recording.night_id,
+                    rec_start=recording.rec_start,
+                    epoch_duration_sec=self.epoch_duration_sec,
+                    epochs_df=merged_df,
+                    raw_slices=slices,
+                    metadata=recording.metadata,
+                )
         """Process a NightRecording and return an EpochedNight.
 
         Ensures every epoch in [0, total_epochs - 1] is present in the output,
@@ -328,6 +360,7 @@ def align_night_to_epochs(
     recording: NightRecording,
     epoch_duration_sec: float = 30.0,
     preserve_slices: bool = False,
+    chunk_size_epochs: int | None = None,
 ) -> EpochedNight:
     """Convenience function to align a NightRecording into 30-second epochs.
 
@@ -335,9 +368,125 @@ def align_night_to_epochs(
         recording: Loaded NightRecording instance.
         epoch_duration_sec: Duration in seconds for each epoch (default: 30.0).
         preserve_slices: Whether to preserve raw dataframe slices per epoch.
+        chunk_size_epochs: Optional chunk size for bounded-memory processing.
 
     Returns:
         EpochedNight instance.
     """
     aligner = EpochAligner(epoch_duration_sec=epoch_duration_sec)
-    return aligner.align_night(recording, preserve_slices=preserve_slices)
+    return aligner.align_night(
+        recording,
+        preserve_slices=preserve_slices,
+        chunk_size_epochs=chunk_size_epochs,
+    )
+
+
+def iter_align_night_chunks(
+    recording: NightRecording,
+    chunk_size_epochs: int = 120,
+    epoch_duration_sec: float = 30.0,
+    preserve_slices: bool = False,
+) -> Iterator[EpochedNight]:
+    """Streaming generator yielding EpochedNight chunks for bounded-memory processing.
+
+    Parameters
+    ----------
+    recording : NightRecording
+        Full overnight recording object.
+    chunk_size_epochs : int, default=120
+        Number of epochs per streamed chunk (default 120 epochs = 1 hour).
+    epoch_duration_sec : float, default=30.0
+        Duration per epoch in seconds.
+    preserve_slices : bool, default=False
+        Whether to retain raw slice dataframes in each chunk.
+
+    Yields
+    ------
+    EpochedNight
+        EpochedNight instance for each contiguous chunk of epochs.
+    """
+    total_epochs = recording.total_epochs
+    rec_start = recording.rec_start
+    rec_start_unix = rec_start.timestamp()
+    aligner = EpochAligner(epoch_duration_sec=epoch_duration_sec)
+
+    for start_ep in range(0, total_epochs, chunk_size_epochs):
+        end_ep = min(start_ep + chunk_size_epochs, total_epochs)
+        t0 = rec_start_unix + start_ep * epoch_duration_sec
+        t1 = rec_start_unix + end_ep * epoch_duration_sec
+
+        hr_chunk = None
+        if recording.has_hr and recording.hr is not None:
+            hr_chunk = recording.hr[
+                (recording.hr["timestamp"] >= t0) & (recording.hr["timestamp"] < t1)
+            ].copy()
+
+        motion_chunk = None
+        if recording.has_motion and recording.motion is not None:
+            motion_chunk = recording.motion[
+                (recording.motion["timestamp"] >= t0) & (recording.motion["timestamp"] < t1)
+            ].copy()
+
+        labels_chunk = None
+        if recording.has_labels and recording.labels is not None:
+            labels_chunk = recording.labels[start_ep:end_ep]
+
+        chunk_rec = NightRecording(
+            subject_id=recording.subject_id,
+            night_id=recording.night_id,
+            rec_start=pd.to_datetime(t0, unit="s", utc=True),
+            epoch_duration_sec=epoch_duration_sec,
+            hr=hr_chunk,
+            motion=motion_chunk,
+            labels=labels_chunk,
+            metadata=dict(recording.metadata),
+        )
+        chunk_epoched = aligner.align_night(chunk_rec, preserve_slices=preserve_slices)
+        chunk_epoched.epochs_df["epoch"] = np.arange(start_ep, end_ep, dtype=int)
+        yield chunk_epoched
+
+
+def compute_strided_epoch_aggregations(
+    signal_array: np.ndarray,
+    samples_per_epoch: int,
+) -> dict[str, np.ndarray]:
+    """Compute vectorized epoch-level summary statistics using strided 2D array views.
+
+    Parameters
+    ----------
+    signal_array : np.ndarray
+        1D contiguous numpy array of sensor values.
+    samples_per_epoch : int
+        Exact number of uniform samples per epoch interval.
+
+    Returns
+    -------
+    dict[str, np.ndarray]
+        Dictionary of per-epoch 'mean', 'std', 'min', 'max', 'count'.
+    """
+    arr = np.asarray(signal_array, dtype=float)
+    n_total = len(arr)
+    if n_total == 0 or samples_per_epoch <= 0:
+        return {
+            "mean": np.array([]),
+            "std": np.array([]),
+            "min": np.array([]),
+            "max": np.array([]),
+            "count": np.array([]),
+        }
+    n_epochs = n_total // samples_per_epoch
+
+    trimmed = arr[: n_epochs * samples_per_epoch]
+    windows = trimmed.reshape((n_epochs, samples_per_epoch))
+
+    return {
+        "mean": np.nanmean(windows, axis=1),
+        "std": (
+            np.nanstd(windows, axis=1, ddof=1)
+            if samples_per_epoch > 1
+            else np.zeros(n_epochs)
+        ),
+        "min": np.nanmin(windows, axis=1),
+        "max": np.nanmax(windows, axis=1),
+        "count": np.sum(~np.isnan(windows), axis=1),
+    }

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from noctiband.models.baselines import MajorityBaseline, MotionThresholdBaseline
+from noctiband.models.manifest import ModelManifest
 from noctiband.models.registry import (
     build_model,
     get_estimator,
@@ -12,6 +13,7 @@ from noctiband.models.registry import (
 
 __all__ = [
     "MajorityBaseline",
+    "ModelManifest",
     "MotionThresholdBaseline",
     "build_model",
     "get_estimator",

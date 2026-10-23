@@ -34,6 +34,16 @@ def load_inference_model(model_path: Path | str | None = None) -> dict[str, Any]
         )
 
     artifact = joblib.load(path)
+    meta_path = path.with_name(f"{path.stem}_meta.json")
+    if meta_path.exists() and isinstance(artifact, dict):
+        try:
+            from noctiband.models.manifest import ModelManifest
+
+            manifest = ModelManifest.from_file(meta_path)
+            artifact["manifest"] = manifest
+        except Exception as e:
+            logger.warning(f"Failed to load or validate manifest at {meta_path}: {e}")
+
     _MODEL_CACHE[path_key] = artifact
     return artifact
 
@@ -126,8 +136,11 @@ def predict_night(
         "warnings": warnings,
     }
 
-    # 4. Load Model Artifact
+    # 4. Load Model Artifact & Validate Manifest
     model_dict = load_inference_model(model_path)
+    if "manifest" in model_dict:
+        model_dict["manifest"].validate_features(epoch_table.columns)
+
     pipeline = model_dict["pipeline"]
     features = model_dict.get("features", MODEL_FEATURES)
     threshold = model_dict.get("optimal_threshold", 0.50)

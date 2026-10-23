@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import sqlite3
+import zlib
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+import numpy as np
 import pandas as pd
 
 FORBIDDEN_DIAGNOSTIC_TERMS = [
@@ -39,6 +41,7 @@ CREATE TABLE IF NOT EXISTS nights_summary (
     sol_min REAL NOT NULL,
     noa INTEGER NOT NULL,
     passed_qc INTEGER NOT NULL DEFAULT 1,
+    hypnogram_compressed BLOB,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -55,8 +58,20 @@ CREATE TABLE IF NOT EXISTS habit_logs (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE TABLE IF NOT EXISTS longitudinal_metrics (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    subject_id TEXT NOT NULL,
+    calculation_date TEXT NOT NULL,
+    cumulative_sleep_debt_min REAL NOT NULL,
+    sleep_regularity_index REAL NOT NULL,
+    social_jetlag_min REAL DEFAULT 0.0,
+    n_nights_analyzed INTEGER NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
 CREATE INDEX IF NOT EXISTS idx_nights_subject ON nights_summary(subject_id);
 CREATE INDEX IF NOT EXISTS idx_habits_subject ON habit_logs(subject_id);
+CREATE INDEX IF NOT EXISTS idx_longitudinal_subject ON longitudinal_metrics(subject_id);
 """
 
 
@@ -68,7 +83,80 @@ def get_database_connection(db_path: Path | str = ":memory:") -> sqlite3.Connect
     conn.row_factory = sqlite3.Row
     with conn:
         conn.executescript(SCHEMA_SQL)
+        # Safe migration if table was created in an earlier session without hypnogram_compressed
+        try:
+            conn.execute("ALTER TABLE nights_summary ADD COLUMN hypnogram_compressed BLOB")
+        except sqlite3.OperationalError:
+            pass  # column already exists
     return conn
+
+
+def compress_hypnogram(labels: np.ndarray | list[int]) -> bytes:
+    """Compress integer epoch sleep stage labels into compact binary blob using zlib."""
+    arr = np.asarray(labels, dtype=np.int8)
+    return zlib.compress(arr.tobytes())
+
+
+def decompress_hypnogram(blob: bytes) -> np.ndarray:
+    """Decompress binary blob back into integer epoch sleep stage array."""
+    decompressed = zlib.decompress(blob)
+    return np.frombuffer(decompressed, dtype=np.int8)
+
+
+def calculate_sleep_debt(
+    tst_history_min: list[float] | np.ndarray,
+    baseline_need_min: float = 480.0,
+) -> float:
+    """Compute cumulative sleep debt across consecutive nights.
+
+    Debt accumulates when nightly Total Sleep Time (TST) is below baseline need.
+    Debt decays partially on nights with recovery sleep (above baseline).
+    """
+    if len(tst_history_min) == 0:
+        return 0.0
+
+    debt = 0.0
+    for tst in tst_history_min:
+        diff = baseline_need_min - float(tst)
+        debt = max(0.0, debt + diff)
+    return round(debt, 1)
+
+
+def calculate_sri(hypnograms: list[np.ndarray | list[int]]) -> float:
+    """Calculate the Sleep Regularity Index (SRI) across consecutive 24-hour hypnograms.
+
+    Scale is -100 to 100, where 100 is identical sleep timing across consecutive days.
+    """
+    if len(hypnograms) < 2:
+        return 100.0
+
+    agreements = []
+    for i in range(len(hypnograms) - 1):
+        h1 = np.asarray(hypnograms[i], dtype=int)
+        h2 = np.asarray(hypnograms[i + 1], dtype=int)
+        min_len = min(len(h1), len(h2))
+        if min_len > 0:
+            match = np.mean(h1[:min_len] == h2[:min_len])
+            agreements.append(match)
+
+    if not agreements:
+        return 100.0
+
+    mean_match = float(np.mean(agreements))
+    sri = 100.0 * (2.0 * mean_match - 1.0)
+    return round(sri, 1)
+
+
+def calculate_social_jetlag(
+    workday_onsets_min: list[float] | np.ndarray,
+    freeday_onsets_min: list[float] | np.ndarray,
+) -> float:
+    """Calculate absolute difference in sleep timing between workdays and free days (min)."""
+    if len(workday_onsets_min) == 0 or len(freeday_onsets_min) == 0:
+        return 0.0
+    w_mean = float(np.mean(workday_onsets_min))
+    f_mean = float(np.mean(freeday_onsets_min))
+    return round(abs(f_mean - w_mean), 1)
 
 
 def save_night_summary(conn: sqlite3.Connection, summary: dict[str, Any]) -> int:
@@ -76,12 +164,16 @@ def save_night_summary(conn: sqlite3.Connection, summary: dict[str, Any]) -> int
     sql = """
     INSERT INTO nights_summary (
         subject_id, night_date, tst_min, sleep_efficiency,
-        waso_min, sol_min, noa, passed_qc, created_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        waso_min, sol_min, noa, passed_qc, hypnogram_compressed, created_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     """
     night_date = summary.get("night_date") or datetime.now().strftime("%Y-%m-%d")
     created_at = summary.get("created_at") or datetime.now().isoformat()
     passed_qc = 1 if summary.get("passed_qc", True) else 0
+
+    hypno_blob = summary.get("hypnogram_compressed")
+    if hypno_blob is None and summary.get("hypnogram") is not None:
+        hypno_blob = compress_hypnogram(summary["hypnogram"])
 
     with conn:
         cur = conn.execute(
@@ -95,6 +187,7 @@ def save_night_summary(conn: sqlite3.Connection, summary: dict[str, Any]) -> int
                 float(summary["sol_min"]),
                 int(summary["noa"]),
                 passed_qc,
+                hypno_blob,
                 str(created_at),
             ),
         )
@@ -109,7 +202,7 @@ def get_night_history(
     """Retrieve historical night summaries for a user, sorted by date ascending."""
     sql = """
     SELECT id, subject_id, night_date, tst_min, sleep_efficiency,
-           waso_min, sol_min, noa, passed_qc, created_at
+           waso_min, sol_min, noa, passed_qc, hypnogram_compressed, created_at
     FROM nights_summary
     WHERE subject_id = ?
     ORDER BY night_date ASC, id ASC
@@ -117,6 +210,52 @@ def get_night_history(
     """
     df = pd.read_sql_query(sql, conn, params=(str(subject_id), int(limit)))
     return df
+
+
+def save_longitudinal_metrics(conn: sqlite3.Connection, metrics: dict[str, Any]) -> int:
+    """Store multi-night longitudinal health metrics (sleep debt, SRI, social jetlag)."""
+    sql = """
+    INSERT INTO longitudinal_metrics (
+        subject_id, calculation_date, cumulative_sleep_debt_min,
+        sleep_regularity_index, social_jetlag_min, n_nights_analyzed, created_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?)
+    """
+    calc_date = metrics.get("calculation_date") or datetime.now().strftime("%Y-%m-%d")
+    created_at = metrics.get("created_at") or datetime.now().isoformat()
+
+    with conn:
+        cur = conn.execute(
+            sql,
+            (
+                str(metrics["subject_id"]),
+                str(calc_date),
+                float(metrics["cumulative_sleep_debt_min"]),
+                float(metrics["sleep_regularity_index"]),
+                float(metrics.get("social_jetlag_min", 0.0)),
+                int(metrics.get("n_nights_analyzed", 7)),
+                str(created_at),
+            ),
+        )
+        return int(cur.lastrowid)
+
+
+def get_longitudinal_history(
+    conn: sqlite3.Connection,
+    subject_id: str,
+    limit: int = 30,
+) -> list[dict[str, Any]]:
+    """Retrieve longitudinal trend records for a user."""
+    sql = """
+    SELECT id, subject_id, calculation_date, cumulative_sleep_debt_min,
+           sleep_regularity_index, social_jetlag_min, n_nights_analyzed, created_at
+    FROM longitudinal_metrics
+    WHERE subject_id = ?
+    ORDER BY calculation_date ASC, id ASC
+    LIMIT ?
+    """
+    cur = conn.execute(sql, (str(subject_id), int(limit)))
+    rows = cur.fetchall()
+    return [dict(r) for r in rows]
 
 
 def log_habit_entry(conn: sqlite3.Connection, habit: dict[str, Any]) -> int:
