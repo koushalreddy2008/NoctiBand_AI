@@ -2,11 +2,12 @@
 Unit tests for NoctiBand nightly sleep report builder.
 """
 
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import pytest
 
-from noctiband.reporting.nightly import build_report, format_report_text
+from noctiband.reporting.nightly import build_report, format_report_text, plot_hypnogram
 from src.io.contracts import SignalQuality
 
 
@@ -83,3 +84,42 @@ def test_clock_times_and_format_text():
 def test_empty_dataframe_raises():
     with pytest.raises(ValueError, match="No epochs to report on"):
         build_report(pd.DataFrame())
+
+
+def test_plot_hypnogram_structure_and_labels():
+    labels = np.array([0] * 60 + [1] * 120 + [0] * 20 + [1] * 120)  # 320 epochs
+    fig = plot_hypnogram(labels, rec_start=1700000000.0)
+
+    try:
+        # Exactly one axis: no empty secondary axes or unused subplots
+        assert len(fig.axes) == 1
+        ax = fig.axes[0]
+
+        # Verify Y ticks and human-readable stage labels
+        y_labels = [t.get_text() for t in ax.get_yticklabels()]
+        assert "Wake" in y_labels
+        assert "Sleep" in y_labels
+
+        # Verify X tick labels use relative time format (e.g. 0h, 1h, 2h)
+        x_labels = [t.get_text() for t in ax.get_xticklabels()]
+        assert any("0h" in xl for xl in x_labels)
+        assert any("1h" in xl for xl in x_labels)
+
+        # Verify title and label
+        assert "Hypnogram" in ax.get_title()
+    finally:
+        plt.close(fig)
+
+
+def test_plot_hypnogram_multiclass():
+    # 3-class sequence: 0=Wake, 1=NREM, 2=REM
+    labels = np.array([0] * 30 + [1] * 60 + [2] * 30)
+    fig = plot_hypnogram(labels)
+
+    try:
+        assert len(fig.axes) == 1
+        ax = fig.axes[0]
+        y_labels = [t.get_text() for t in ax.get_yticklabels()]
+        assert y_labels == ["Wake", "NREM", "REM"]
+    finally:
+        plt.close(fig)

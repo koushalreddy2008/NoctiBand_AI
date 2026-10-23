@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
@@ -15,6 +16,7 @@ except ImportError:
 from noctiband.app_glue import aggregate_multi_night, load_and_validate_upload
 from noctiband.inference.predict import predict_night
 from noctiband.report_bridge import make_report
+from noctiband.reporting.nightly import plot_hypnogram
 from noctiband.types import NightData, QualityControlError
 
 
@@ -69,6 +71,15 @@ def run_app():
         ["Synthetic Demo Night", "Upload Wearable Data", "Multi-Night Synthetic Demo"],
     )
 
+    # Session state hygiene: Reset or isolate metrics when user switches modes
+    if "active_mode" not in st.session_state:
+        st.session_state["active_mode"] = mode
+    elif st.session_state["active_mode"] != mode:
+        keys_to_clear = [k for k in list(st.session_state.keys()) if k != "active_mode"]
+        for k in keys_to_clear:
+            del st.session_state[k]
+        st.session_state["active_mode"] = mode
+
     night_data = None
 
     if mode == "Synthetic Demo Night":
@@ -84,11 +95,26 @@ def run_app():
 
         if st.sidebar.button("Run Multi-Night Analysis", type="primary"):
             predictions = []
-            for n in multi_nights:
-                pred = predict_night(n, allow_partial=True)
-                predictions.append(pred)
+            try:
+                for n in multi_nights:
+                    pred = predict_night(n, allow_partial=True)
+                    predictions.append(pred)
+            except QualityControlError as qc_err:
+                st.error(f"⚠️ Multi-Night Quality Control Failure: {qc_err}")
+                st.warning(
+                    "Recommendation: Ensure wearable sensors maintain continuous skin contact "
+                    "and signal quality exceeds minimum coverage thresholds."
+                )
+                return
+            except Exception as e:
+                st.error(f"⚠️ Unexpected Multi-Night Analysis Error: {e}")
+                return
 
             agg = aggregate_multi_night(predictions)
+            st.session_state["multi_night_agg"] = agg
+
+        if "multi_night_agg" in st.session_state:
+            agg = st.session_state["multi_night_agg"]
             st.subheader("📊 7-Night Sleep Architecture Summary")
             col1, col2, col3, col4 = st.columns(4)
             col1.metric(
@@ -155,14 +181,11 @@ def run_app():
             c3.metric("Wake After Onset (WASO)", f"{m['waso_min']:.1f} min")
             c4.metric("Sleep Onset Latency (SOL)", f"{m['sol_min']:.1f} min")
 
-            # Hypnogram
+            # Clean Hypnogram with human-readable ticks and no secondary unused subplots
             st.subheader("📈 Sleep Hypnogram (30s Epochs)")
-            hypno_df = pd.DataFrame({
-                "Epoch": np.arange(len(prediction.epoch_labels)),
-                "Stage": ["Sleep" if s == 1 else "Wake" for s in prediction.epoch_labels],
-                "StageCode": prediction.epoch_labels,
-            })
-            st.area_chart(hypno_df.set_index("Epoch")["StageCode"])
+            fig = plot_hypnogram(prediction, rec_start=night_data.rec_start)
+            st.pyplot(fig)
+            plt.close(fig)
 
             # Recommendations
             st.subheader("💡 Sleep Hygiene & Lifestyle Recommendations")
@@ -174,7 +197,15 @@ def run_app():
             st.caption(f"🛡️ **Non-Diagnostic Disclaimer**: {report['disclaimer']}")
 
         except QualityControlError as qc_err:
-            st.error(f"Quality Control Error: {qc_err}")
+            st.error(f"⚠️ Quality Control Guard Triggered: {qc_err}")
+            st.warning(
+                "Actionable Recommendations:\n"
+                "- Ensure wristband is worn snugly and sensors maintain uninterrupted contact.\n"
+                "- Check sensor battery levels to prevent gaps in photoplethysmography telemetry.\n"
+                "- Verify recording covers at least 4 hours with valid heart rate and motion data."
+            )
+        except Exception as e:
+            st.error(f"⚠️ Sleep Staging Error: {e}")
 
 
 if __name__ == "__main__":

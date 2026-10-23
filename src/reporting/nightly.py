@@ -8,6 +8,7 @@ from noctiband.reporting.nightly import (
     STAGE_NAMES,
     build_report,
     format_report_text,
+    plot_hypnogram,
 )
 
 __all__ = [
@@ -16,4 +17,5 @@ __all__ = [
     "STAGE_NAMES",
     "build_report",
     "format_report_text",
+    "plot_hypnogram",
 ]

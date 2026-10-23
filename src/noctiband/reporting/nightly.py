@@ -200,3 +200,97 @@ def format_report_text(r: dict[str, Any]) -> str:
         lines.append(f"WARNING: {w}")
 
     return "\n".join(lines)
+
+
+def plot_hypnogram(
+    epoch_labels: Any,
+    rec_start: float | str | pd.Timestamp | None = None,
+    tz: str = "UTC",
+    figsize: tuple[float, float] = (10, 3.2),
+) -> Any:
+    """Render a clinical sleep hypnogram without empty secondary axes or unused subplots.
+
+    Parameters
+    ----------
+    epoch_labels : array-like or NightPrediction or dict
+        Epoch sleep stage codes (0=Wake, 1=Sleep / NREM, etc.).
+    rec_start : float, str, or Timestamp, optional
+        Recording start time to calculate local clock times.
+    tz : str, default='UTC'
+        Timezone for local clock calculations.
+    figsize : tuple of float, default=(10, 3.2)
+        Matplotlib figure dimensions (width, height).
+
+    Returns
+    -------
+    matplotlib.figure.Figure
+        Single-axis clean hypnogram figure with human-readable stage and time labels.
+    """
+    import matplotlib.pyplot as plt
+
+    if hasattr(epoch_labels, "epoch_labels"):
+        labels = np.asarray(epoch_labels.epoch_labels, dtype=int)
+        if rec_start is None:
+            rec_start = getattr(epoch_labels, "rec_start", None)
+    elif isinstance(epoch_labels, dict):
+        raw_seq = epoch_labels.get("epoch_labels", epoch_labels.get("hypnogram", []))
+        labels = np.asarray(raw_seq, dtype=int)
+        if rec_start is None:
+            rec_start = epoch_labels.get("rec_start", None)
+    else:
+        labels = np.asarray(epoch_labels, dtype=int)
+
+    n_epochs = len(labels)
+    hours = np.arange(n_epochs) * (EPOCH_SEC / 3600.0)
+    total_hours = (n_epochs * EPOCH_SEC) / 3600.0
+
+    # Determine human-readable ticks and stage labels
+    max_label = int(labels.max()) if n_epochs > 0 else 1
+    if max_label <= 1:
+        ticks = [0, 1]
+        tick_names = ["Wake", "Sleep"]
+    elif max_label == 2:
+        ticks = [0, 1, 2]
+        tick_names = ["Wake", "NREM", "REM"]
+    else:
+        ticks = [0, 1, 2, 3, 4]
+        tick_names = ["Wake", "N1", "N2", "N3", "REM"]
+
+    fig, ax = plt.subplots(figsize=figsize)
+
+    if n_epochs > 0:
+        ax.step(
+            hours,
+            labels,
+            where="post",
+            color="#2b5c8f",
+            linewidth=1.8,
+            label="Sleep Stage",
+        )
+        ax.fill_between(hours, labels, step="post", alpha=0.25, color="#4a90e2")
+
+        tick_step = 1.0 if total_hours <= 10.0 else 2.0
+        x_ticks = np.arange(0.0, total_hours + 0.001, tick_step)
+        if rec_start is not None and rec_start != 0.0:
+            x_labels = [
+                f"{int(h)}h\n({_clock(rec_start, int(h * 3600 / EPOCH_SEC), tz)})"
+                for h in x_ticks
+            ]
+            ax.set_xlabel(f"Elapsed Time (Hours) / Clock Time ({tz})", fontsize=9)
+        else:
+            x_labels = [f"{int(h)}h" for h in x_ticks]
+            ax.set_xlabel("Elapsed Time (Hours)", fontsize=9)
+
+        ax.set_xticks(x_ticks)
+        ax.set_xticklabels(x_labels, fontsize=9)
+        ax.set_xlim(0, max(hours[-1], 0.1))
+
+    ax.set_yticks(ticks)
+    ax.set_yticklabels(tick_names, fontsize=10, fontweight="bold")
+    ax.set_ylabel("Stage", fontsize=10)
+    ax.set_ylim(-0.35, max(ticks) + 0.35)
+    ax.grid(True, linestyle=":", alpha=0.6, axis="both")
+    ax.set_title("Nocturnal Sleep Hypnogram", fontsize=11, fontweight="bold")
+
+    fig.tight_layout()
+    return fig
