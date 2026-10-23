@@ -25,7 +25,11 @@ def main():
     args = ap.parse_args()
 
     path = ROOT / f"artifacts/predictions/{args.model}_val.csv"
-    df = pd.read_csv(path).sort_values(["subject_id", "night_id", "epoch_idx"]).reset_index(drop=True)
+    df = (
+        pd.read_csv(path)
+        .sort_values(["subject_id", "night_id", "epoch_idx"])
+        .reset_index(drop=True)
+    )
 
     rows = []
     for w in WINDOWS:

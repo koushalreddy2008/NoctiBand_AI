@@ -69,7 +69,7 @@ def main():
     res_dir = ROOT / "artifacts/results"
     res_dir.mkdir(parents=True, exist_ok=True)
     row = {
-        "time": dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds"),
+        "time": dt.datetime.now(dt.UTC).isoformat(timespec="seconds"),
         "model": name,
         "macro_f1": res["macro_f1"],
         "balanced_accuracy": res["balanced_accuracy"],

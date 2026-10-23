@@ -17,5 +17,7 @@ def test_all_models_fit_and_predict_with_missing_values():
             assert model.predict(X).shape == (200,)
         except ImportError as e:
             if "Application Control policy" in str(e):
-                pytest.skip(f"Skipping {kind} due to Windows Smart App Control blocking native extension")
+                pytest.skip(
+                    f"Skipping {kind} due to Windows Smart App Control blocking native extension"
+                )
             raise

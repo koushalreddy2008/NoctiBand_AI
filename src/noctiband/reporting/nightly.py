@@ -26,7 +26,7 @@ def _runs(mask: np.ndarray | list[bool]) -> list[tuple[int, int]]:
         return []
     padded = np.concatenate(([False], m, [False])).astype(int)
     d = np.diff(padded)
-    return list(zip(np.where(d == 1)[0], np.where(d == -1)[0]))
+    return list(zip(np.where(d == 1)[0], np.where(d == -1)[0], strict=True))
 
 
 def _clock(rec_start: float | str | pd.Timestamp, epoch: int, tz: str = "UTC") -> str:
@@ -92,7 +92,9 @@ def build_report(
 
     # Data quality / coverage analysis
     coverage = None
-    q_col = "quality_flag" if "quality_flag" in df.columns else ("q_flag" if "q_flag" in df.columns else None)
+    q_col = "quality_flag" if "quality_flag" in df.columns else (
+        "q_flag" if "q_flag" in df.columns else None
+    )
     if q_col is not None:
         is_good = df[q_col].astype(str).str.lower().isin(GOOD_QUALITY_VALUES)
         coverage = float(is_good.mean())
@@ -109,7 +111,9 @@ def build_report(
         warnings.append("The recording is shorter than 4 hours; the estimates may be unreliable.")
 
     dist = pd.Series(y).value_counts(normalize=True).sort_index()
-    stage_distribution = {STAGE_NAMES.get(int(k), str(k)): round(float(v), 3) for k, v in dist.items()}
+    stage_distribution = {
+        STAGE_NAMES.get(int(k), str(k)): round(float(v), 3) for k, v in dist.items()
+    }
 
     report: dict[str, Any] = {
         "recording_minutes": time_in_bed_min,

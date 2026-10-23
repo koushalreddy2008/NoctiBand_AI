@@ -20,7 +20,7 @@ def test_yaml_configs_exist_and_valid():
         config_path = CONFIGS_DIR / config_name
         assert config_path.is_file(), f"Missing config file: {config_name}"
 
-        with open(config_path, "r") as f:
+        with open(config_path) as f:
             data = yaml.safe_load(f)
 
         assert "name" in data
@@ -34,7 +34,9 @@ def test_build_model_dummy():
         pipe = build_model("dummy")
     except ImportError as e:
         if "Application Control policy" in str(e):
-            pytest.skip("Skipping build_model on Windows due to Smart App Control blocking sklearn native DLL")
+            pytest.skip(
+                "Skipping build_model on Windows due to Smart App Control blocking sklearn DLL"
+            )
         raise
     assert "impute" in pipe.named_steps
     assert "scale" in pipe.named_steps
