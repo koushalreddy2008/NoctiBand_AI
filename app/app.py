@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import tempfile
+from pathlib import Path
+
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
@@ -14,9 +17,20 @@ except ImportError:
     st = None
 
 from noctiband.app_glue import aggregate_multi_night, load_and_validate_upload
+from noctiband.features.hrv import compute_epoch_hrv_features
 from noctiband.inference.predict import predict_night
 from noctiband.report_bridge import make_report
+from noctiband.reporting.export import (
+    export_report_html,
+    export_report_markdown,
+    export_report_pdf,
+)
 from noctiband.reporting.nightly import plot_hypnogram
+from noctiband.storage import (
+    calculate_sleep_debt,
+    calculate_social_jetlag,
+    calculate_sri,
+)
 from noctiband.types import NightData, QualityControlError
 
 
@@ -112,9 +126,12 @@ def run_app():
 
             agg = aggregate_multi_night(predictions)
             st.session_state["multi_night_agg"] = agg
+            st.session_state["multi_night_preds"] = predictions
 
         if "multi_night_agg" in st.session_state:
             agg = st.session_state["multi_night_agg"]
+            preds = st.session_state.get("multi_night_preds", [])
+
             st.subheader("📊 7-Night Sleep Architecture Summary")
             col1, col2, col3, col4 = st.columns(4)
             col1.metric(
@@ -131,6 +148,37 @@ def run_app():
             col4.metric(
                 "Efficiency Trend Slope",
                 f"{agg['efficiency_trend_slope']:+.3f}% / night",
+            )
+
+            # Longitudinal chronic metrics (Task 2)
+            st.subheader("📈 Multi-Night Longitudinal Health Analytics")
+            tst_history = [float(n["tst_min"]) for n in agg["nights"]]
+            sleep_debt = calculate_sleep_debt(tst_history, baseline_need_min=480.0)
+
+            hypnos = [p.epoch_labels for p in preds] if preds else []
+            sri = calculate_sri(hypnos) if hypnos else agg["sleep_regularity_index"]
+
+            sol_history = [float(n.get("sol_min", 20.0)) for n in agg["nights"]]
+            workdays = sol_history[:5]
+            freedays = sol_history[5:] if len(sol_history) > 5 else sol_history[-2:]
+            social_jetlag = calculate_social_jetlag(workdays, freedays)
+
+            lcol1, lcol2, lcol3 = st.columns(3)
+            lcol1.metric(
+                "Cumulative Sleep Debt",
+                f"{sleep_debt:.1f} min",
+                "Baseline: 8.0 hrs/night",
+                delta_color="inverse",
+            )
+            lcol2.metric(
+                "Sleep Regularity Index (SRI)",
+                f"{sri:.1f} / 100",
+                "Target: >= 80",
+            )
+            lcol3.metric(
+                "Estimated Social Jetlag",
+                f"{social_jetlag:.1f} min",
+                "Workdays vs Free Days",
             )
 
             trend_df = pd.DataFrame([
@@ -187,10 +235,80 @@ def run_app():
             st.pyplot(fig)
             plt.close(fig)
 
+            # Advanced Autonomic & HRV Metrics Section (Task 3)
+            if night_data.hr is not None and not night_data.hr.empty:
+                with st.expander("🔬 Advanced Autonomic & HRV Metrics", expanded=False):
+                    hrv_epoch_df = compute_epoch_hrv_features(
+                        hr_df=night_data.hr,
+                        rec_start=night_data.rec_start,
+                        n_epochs=len(prediction.epoch_labels),
+                    )
+                    valid_rmssd = hrv_epoch_df["hrv_rmssd"].dropna()
+                    valid_lf_hf = hrv_epoch_df["hrv_lf_hf_ratio"].dropna()
+                    valid_sdnn = hrv_epoch_df["hrv_sdnn"].dropna()
+
+                    hcol1, hcol2, hcol3 = st.columns(3)
+                    rmssd_str = f"{valid_rmssd.mean():.1f} ms" if not valid_rmssd.empty else "N/A"
+                    hcol1.metric("Mean RMSSD (Vagal Tone)", rmssd_str, "Target: 20 – 60 ms")
+
+                    lf_hf_str = f"{valid_lf_hf.mean():.2f}" if not valid_lf_hf.empty else "N/A"
+                    hcol2.metric("Mean LF/HF Ratio", lf_hf_str, "Optimal: 1.0 – 2.5")
+
+                    sdnn_str = f"{valid_sdnn.mean():.1f} ms" if not valid_sdnn.empty else "N/A"
+                    hcol3.metric("Mean SDNN", sdnn_str, "Target: >= 40 ms")
+
+                    hrv_chart_df = pd.DataFrame({
+                        "Epoch": np.arange(len(hrv_epoch_df)),
+                        "RMSSD (ms)": hrv_epoch_df["hrv_rmssd"],
+                        "LF/HF Ratio": hrv_epoch_df["hrv_lf_hf_ratio"],
+                    }).set_index("Epoch")
+                    st.line_chart(hrv_chart_df)
+
             # Recommendations
             st.subheader("💡 Sleep Hygiene & Lifestyle Recommendations")
             for tip in report["recommendations"]:
                 st.markdown(f"- {tip}")
+
+            # Export Report Section (Task 1)
+            st.subheader("📥 Export Nightly Sleep Report")
+            exp_col1, exp_col2, exp_col3 = st.columns(3)
+
+            try:
+                md_text = export_report_markdown(report)
+                exp_col1.download_button(
+                    label="📄 Download Markdown (.md)",
+                    data=md_text,
+                    file_name=f"{night_data.subject}_{night_data.night}_report.md",
+                    mime="text/markdown",
+                )
+            except Exception as e:
+                exp_col1.error(f"Markdown export unavailable: {e}")
+
+            try:
+                html_text = export_report_html(report)
+                exp_col2.download_button(
+                    label="🌐 Download HTML Report (.html)",
+                    data=html_text,
+                    file_name=f"{night_data.subject}_{night_data.night}_report.html",
+                    mime="text/html",
+                )
+            except Exception as e:
+                exp_col2.error(f"HTML export unavailable: {e}")
+
+            try:
+                with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp_pdf:
+                    tmp_pdf_path = Path(tmp_pdf.name)
+                export_report_pdf(report, tmp_pdf_path)
+                pdf_bytes = tmp_pdf_path.read_bytes()
+                tmp_pdf_path.unlink(missing_ok=True)
+                exp_col3.download_button(
+                    label="📑 Download PDF Summary (.pdf)",
+                    data=pdf_bytes,
+                    file_name=f"{night_data.subject}_{night_data.night}_report.pdf",
+                    mime="application/pdf",
+                )
+            except Exception as e:
+                exp_col3.error(f"PDF export unavailable: {e}")
 
             # Disclaimer
             st.markdown("---")
