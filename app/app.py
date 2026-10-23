@@ -30,8 +30,121 @@ from noctiband.storage import (
     calculate_sleep_debt,
     calculate_social_jetlag,
     calculate_sri,
+    validate_suggestion_safety,
 )
 from noctiband.types import NightData, QualityControlError
+
+# Premium Dark Mode Theme Styles
+CUSTOM_CSS = """
+<style>
+  .stApp {
+    background-color: #0b0f19;
+    color: #f8fafc;
+  }
+  section[data-testid="stSidebar"] {
+    background-color: #0f172a;
+    border-right: 1px solid #1e293b;
+  }
+  .nocti-card {
+    background-color: #131b2e;
+    border: 1px solid #1e293b;
+    border-radius: 10px;
+    padding: 16px 18px;
+    margin-bottom: 12px;
+    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.3);
+  }
+  .metric-header {
+    font-size: 0.75rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: #94a3b8;
+    margin-bottom: 4px;
+  }
+  .metric-val {
+    font-size: 1.7rem;
+    font-weight: 800;
+    color: #38bdf8;
+    line-height: 1.2;
+    word-break: normal;
+  }
+  .metric-sub {
+    font-size: 0.8rem;
+    color: #64748b;
+    margin-top: 4px;
+  }
+  .badge-optimal {
+    display: inline-block;
+    background: rgba(34, 197, 94, 0.15);
+    color: #4ade80;
+    border: 1px solid rgba(34, 197, 94, 0.35);
+    padding: 2px 8px;
+    border-radius: 10px;
+    font-size: 0.72rem;
+    font-weight: 600;
+    margin-top: 6px;
+  }
+  .badge-alert {
+    display: inline-block;
+    background: rgba(245, 158, 11, 0.15);
+    color: #fbbf24;
+    border: 1px solid rgba(245, 158, 11, 0.35);
+    padding: 2px 8px;
+    border-radius: 10px;
+    font-size: 0.72rem;
+    font-weight: 600;
+    margin-top: 6px;
+  }
+  .badge-compliance {
+    display: inline-block;
+    background: rgba(56, 189, 248, 0.12);
+    color: #38bdf8;
+    border: 1px solid rgba(56, 189, 248, 0.3);
+    padding: 4px 12px;
+    border-radius: 12px;
+    font-size: 0.82rem;
+    font-weight: 600;
+    margin: 8px 0;
+  }
+</style>
+"""
+
+
+def metric_card(
+    title: str,
+    value: str,
+    subtext: str = "",
+    badge: str = "",
+    badge_type: str = "optimal",
+) -> str:
+    """Render a premium non-truncating metric card using custom HTML/CSS."""
+    badge_html = ""
+    if badge:
+        cls = "badge-alert" if badge_type == "alert" else "badge-optimal"
+        badge_html = f"<div class='{cls}'>{badge}</div>"
+    return (
+        f"<div class='nocti-card'>"
+        f"<div class='metric-header'>{title}</div>"
+        f"<div class='metric-val'>{value}</div>"
+        f"<div class='metric-sub'>{subtext}</div>"
+        f"{badge_html}"
+        f"</div>"
+    )
+
+
+def style_dark_figure(fig: plt.Figure) -> plt.Figure:
+    """Apply dark health-tech styling to a Matplotlib figure."""
+    fig.patch.set_facecolor("#131b2e")
+    for ax in fig.axes:
+        ax.set_facecolor("#0b0f19")
+        ax.tick_params(colors="#94a3b8")
+        ax.xaxis.label.set_color("#94a3b8")
+        ax.yaxis.label.set_color("#94a3b8")
+        ax.title.set_color("#f8fafc")
+        for spine in ax.spines.values():
+            spine.set_edgecolor("#1e293b")
+        ax.grid(True, linestyle=":", alpha=0.3, color="#334155")
+    return fig
 
 
 def generate_synthetic_demo_night(seed: int = 42, wake_glitches: int = 3) -> NightData:
@@ -49,7 +162,6 @@ def generate_synthetic_demo_night(seed: int = 42, wake_glitches: int = 3) -> Nig
     y = 0.04 * np.cos(2 * np.pi * t_mot / 10.0) + rng.normal(0, 0.01, len(t_mot))
     z = 0.98 + 0.02 * np.sin(2 * np.pi * t_mot / 5.0) + rng.normal(0, 0.01, len(t_mot))
 
-    # Add wake motion spikes
     for _ in range(wake_glitches):
         burst_start = rng.uniform(3600, total_seconds - 3600)
         mask = (t_mot >= burst_start) & (t_mot < burst_start + 60)
@@ -72,10 +184,20 @@ def run_app():
         print("To run interactive UI: streamlit run app/app.py")
         return
 
-    st.set_page_config(page_title="NoctiBand AI - Sleep Wellness", layout="wide")
-    st.title("🌙 NoctiBand AI - Consumer Sleep Architecture")
+    st.set_page_config(
+        page_title="NoctiBand AI - Elite Sleep Architecture",
+        layout="wide",
+        initial_sidebar_state="expanded",
+    )
+    st.markdown(CUSTOM_CSS, unsafe_allow_html=True)
+
+    st.title("🌙 NoctiBand AI — Sleep Architecture & Autonomic Health")
     st.markdown(
-        "*Evidence-based nocturnal sleep staging & wellness tracking using wearable actigraphy.*"
+        "<span style='color: #94a3b8; font-size: 0.95rem;'>"
+        "Evidence-based nocturnal sleep staging, autonomic HRV tracking, "
+        "and chronic wellness analytics."
+        "</span>",
+        unsafe_allow_html=True,
     )
 
     # Sidebar mode selection
@@ -85,7 +207,7 @@ def run_app():
         ["Synthetic Demo Night", "Upload Wearable Data", "Multi-Night Synthetic Demo"],
     )
 
-    # Session state hygiene: Reset or isolate metrics when user switches modes
+    # Session state hygiene
     if "active_mode" not in st.session_state:
         st.session_state["active_mode"] = mode
     elif st.session_state["active_mode"] != mode:
@@ -128,69 +250,8 @@ def run_app():
             st.session_state["multi_night_agg"] = agg
             st.session_state["multi_night_preds"] = predictions
 
-        if "multi_night_agg" in st.session_state:
-            agg = st.session_state["multi_night_agg"]
-            preds = st.session_state.get("multi_night_preds", [])
-
-            st.subheader("📊 7-Night Sleep Architecture Summary")
-            col1, col2, col3, col4 = st.columns(4)
-            col1.metric(
-                "Mean TST",
-                f"{agg['mean_tst_min']:.1f} min",
-                f"±{agg['std_tst_min']:.1f} min",
-            )
-            col2.metric(
-                "Mean Sleep Efficiency",
-                f"{agg['mean_sleep_efficiency']:.1f}%",
-                f"±{agg['std_sleep_efficiency']:.1f}%",
-            )
-            col3.metric("Sleep Regularity Index", f"{agg['sleep_regularity_index']:.1f} / 100")
-            col4.metric(
-                "Efficiency Trend Slope",
-                f"{agg['efficiency_trend_slope']:+.3f}% / night",
-            )
-
-            # Longitudinal chronic metrics (Task 2)
-            st.subheader("📈 Multi-Night Longitudinal Health Analytics")
-            tst_history = [float(n["tst_min"]) for n in agg["nights"]]
-            sleep_debt = calculate_sleep_debt(tst_history, baseline_need_min=480.0)
-
-            hypnos = [p.epoch_labels for p in preds] if preds else []
-            sri = calculate_sri(hypnos) if hypnos else agg["sleep_regularity_index"]
-
-            sol_history = [float(n.get("sol_min", 20.0)) for n in agg["nights"]]
-            workdays = sol_history[:5]
-            freedays = sol_history[5:] if len(sol_history) > 5 else sol_history[-2:]
-            social_jetlag = calculate_social_jetlag(workdays, freedays)
-
-            lcol1, lcol2, lcol3 = st.columns(3)
-            lcol1.metric(
-                "Cumulative Sleep Debt",
-                f"{sleep_debt:.1f} min",
-                "Baseline: 8.0 hrs/night",
-                delta_color="inverse",
-            )
-            lcol2.metric(
-                "Sleep Regularity Index (SRI)",
-                f"{sri:.1f} / 100",
-                "Target: >= 80",
-            )
-            lcol3.metric(
-                "Estimated Social Jetlag",
-                f"{social_jetlag:.1f} min",
-                "Workdays vs Free Days",
-            )
-
-            trend_df = pd.DataFrame([
-                {
-                    "Night": n["night_index"],
-                    "Sleep Efficiency (%)": n["sleep_efficiency"],
-                    "TST (min)": n["tst_min"],
-                }
-                for n in agg["nights"]
-            ])
-            st.line_chart(trend_df.set_index("Night"))
-            return
+        # Use first night for primary tab visualization
+        night_data = multi_nights[0]
 
     else:
         st.sidebar.subheader("Upload Sensor Files")
@@ -221,23 +282,87 @@ def run_app():
             )
             m = report["metrics"]
 
-            # Key metrics cards
-            c1, c2, c3, c4 = st.columns(4)
-            tst_hrs = m["tst_min"] / 60.0
-            c1.metric("Total Sleep Time (TST)", f"{m['tst_min']:.1f} min ({tst_hrs:.1f} hrs)")
-            c2.metric("Sleep Efficiency", f"{m['sleep_efficiency']:.1f}%")
-            c3.metric("Wake After Onset (WASO)", f"{m['waso_min']:.1f} min")
-            c4.metric("Sleep Onset Latency (SOL)", f"{m['sol_min']:.1f} min")
+            # Main Multi-Tab Interface
+            tab1, tab2, tab3, tab4 = st.tabs([
+                "🌙 Night Overview & Hypnogram",
+                "🔬 Autonomic & HRV Telemetry",
+                "📈 Longitudinal Trends & Multi-Night",
+                "📥 Reports & Export Hub",
+            ])
 
-            # Clean Hypnogram with human-readable ticks and no secondary unused subplots
-            st.subheader("📈 Sleep Hypnogram (30s Epochs)")
-            fig = plot_hypnogram(prediction, rec_start=night_data.rec_start)
-            st.pyplot(fig)
-            plt.close(fig)
+            # ---------------------------------------------------------
+            # TAB 1: NIGHT OVERVIEW & HYPNOGRAM
+            # ---------------------------------------------------------
+            with tab1:
+                st.subheader("Core Sleep Metrics")
+                c1, c2, c3, c4 = st.columns(4)
 
-            # Advanced Autonomic & HRV Metrics Section (Task 3)
-            if night_data.hr is not None and not night_data.hr.empty:
-                with st.expander("🔬 Advanced Autonomic & HRV Metrics", expanded=False):
+                tst_min = m.get("tst_min", 0.0)
+                tst_hrs = tst_min / 60.0
+                se = m.get("sleep_efficiency", 0.0)
+                waso = m.get("waso_min", 0.0)
+                sol = m.get("sol_min", 0.0)
+
+                c1.markdown(
+                    metric_card(
+                        "Total Sleep Time",
+                        f"{tst_min:.1f} min",
+                        f"{tst_hrs:.1f} hours asleep",
+                        "Optimal" if tst_min >= 420 else "Sub-optimal",
+                        "optimal" if tst_min >= 420 else "alert",
+                    ),
+                    unsafe_allow_html=True,
+                )
+                c2.markdown(
+                    metric_card(
+                        "Sleep Efficiency",
+                        f"{se:.1f}%",
+                        "Target: >= 85.0%",
+                        "High Efficiency" if se >= 85.0 else "Low Efficiency",
+                        "optimal" if se >= 85.0 else "alert",
+                    ),
+                    unsafe_allow_html=True,
+                )
+                c3.markdown(
+                    metric_card(
+                        "WASO (Wake After Onset)",
+                        f"{waso:.1f} min",
+                        "Target: < 40 min",
+                        "Normal" if waso < 40 else "Elevated Wake",
+                        "optimal" if waso < 40 else "alert",
+                    ),
+                    unsafe_allow_html=True,
+                )
+                c4.markdown(
+                    metric_card(
+                        "Sleep Latency (SOL)",
+                        f"{sol:.1f} min",
+                        "Normal: 10 – 30 min",
+                        "Optimal" if 10 <= sol <= 30 else "Shifted",
+                        "optimal" if 10 <= sol <= 30 else "alert",
+                    ),
+                    unsafe_allow_html=True,
+                )
+
+                st.subheader("Clinical Hypnogram (30s Epoch Staging)")
+                fig = plot_hypnogram(prediction, rec_start=night_data.rec_start)
+                style_dark_figure(fig)
+                st.pyplot(fig)
+                plt.close(fig)
+
+                st.subheader("💡 Sleep Hygiene & Lifestyle Recommendations")
+                for tip in report["recommendations"]:
+                    st.markdown(f"- {tip}")
+
+                st.markdown("---")
+                st.caption(f"🛡️ **Non-Diagnostic Disclaimer**: {report['disclaimer']}")
+
+            # ---------------------------------------------------------
+            # TAB 2: AUTONOMIC & HRV TELEMETRY
+            # ---------------------------------------------------------
+            with tab2:
+                st.subheader("Autonomic Nervous System & HRV Breakdown")
+                if night_data.hr is not None and not night_data.hr.empty:
                     hrv_epoch_df = compute_epoch_hrv_features(
                         hr_df=night_data.hr,
                         rec_start=night_data.rec_start,
@@ -246,73 +371,205 @@ def run_app():
                     valid_rmssd = hrv_epoch_df["hrv_rmssd"].dropna()
                     valid_lf_hf = hrv_epoch_df["hrv_lf_hf_ratio"].dropna()
                     valid_sdnn = hrv_epoch_df["hrv_sdnn"].dropna()
+                    valid_hr = night_data.hr["hr"].dropna()
 
-                    hcol1, hcol2, hcol3 = st.columns(3)
-                    rmssd_str = f"{valid_rmssd.mean():.1f} ms" if not valid_rmssd.empty else "N/A"
-                    hcol1.metric("Mean RMSSD (Vagal Tone)", rmssd_str, "Target: 20 – 60 ms")
+                    h1, h2, h3, h4 = st.columns(4)
+                    rmssd_val = valid_rmssd.mean() if not valid_rmssd.empty else 0.0
+                    h1.markdown(
+                        metric_card(
+                            "Mean RMSSD",
+                            f"{rmssd_val:.1f} ms",
+                            "Vagal / Parasympathetic Tone",
+                            "Optimal Recovery" if rmssd_val >= 25 else "Suppressed",
+                            "optimal" if rmssd_val >= 25 else "alert",
+                        ),
+                        unsafe_allow_html=True,
+                    )
+                    lf_hf_val = valid_lf_hf.mean() if not valid_lf_hf.empty else 0.0
+                    h2.markdown(
+                        metric_card(
+                            "Mean LF/HF Ratio",
+                            f"{lf_hf_val:.2f}",
+                            "Sympathovagal Balance",
+                            "Balanced" if 1.0 <= lf_hf_val <= 2.5 else "Sympathetic Bias",
+                            "optimal" if 1.0 <= lf_hf_val <= 2.5 else "alert",
+                        ),
+                        unsafe_allow_html=True,
+                    )
+                    sdnn_val = valid_sdnn.mean() if not valid_sdnn.empty else 0.0
+                    h3.markdown(
+                        metric_card(
+                            "Mean SDNN",
+                            f"{sdnn_val:.1f} ms",
+                            "Overall HRV Variability",
+                            "Target: >= 40 ms",
+                        ),
+                        unsafe_allow_html=True,
+                    )
+                    hr_mean_val = valid_hr.mean() if not valid_hr.empty else 0.0
+                    h4.markdown(
+                        metric_card(
+                            "Resting Heart Rate",
+                            f"{hr_mean_val:.1f} bpm",
+                            "Nocturnal Average",
+                            "Normal" if hr_mean_val <= 70 else "Elevated",
+                        ),
+                        unsafe_allow_html=True,
+                    )
 
-                    lf_hf_str = f"{valid_lf_hf.mean():.2f}" if not valid_lf_hf.empty else "N/A"
-                    hcol2.metric("Mean LF/HF Ratio", lf_hf_str, "Optimal: 1.0 – 2.5")
-
-                    sdnn_str = f"{valid_sdnn.mean():.1f} ms" if not valid_sdnn.empty else "N/A"
-                    hcol3.metric("Mean SDNN", sdnn_str, "Target: >= 40 ms")
-
+                    st.subheader("Nocturnal HRV Trajectory (RMSSD & Autonomic Balance)")
                     hrv_chart_df = pd.DataFrame({
                         "Epoch": np.arange(len(hrv_epoch_df)),
                         "RMSSD (ms)": hrv_epoch_df["hrv_rmssd"],
                         "LF/HF Ratio": hrv_epoch_df["hrv_lf_hf_ratio"],
                     }).set_index("Epoch")
                     st.line_chart(hrv_chart_df)
+                else:
+                    st.warning("No continuous heart rate telemetry available for HRV extraction.")
 
-            # Recommendations
-            st.subheader("💡 Sleep Hygiene & Lifestyle Recommendations")
-            for tip in report["recommendations"]:
-                st.markdown(f"- {tip}")
+            # ---------------------------------------------------------
+            # TAB 3: LONGITUDINAL TRENDS & MULTI-NIGHT
+            # ---------------------------------------------------------
+            with tab3:
+                st.subheader("Longitudinal Health Analytics & Chronic Trends")
+                if "multi_night_agg" in st.session_state:
+                    agg = st.session_state["multi_night_agg"]
+                    preds = st.session_state.get("multi_night_preds", [])
 
-            # Export Report Section (Task 1)
-            st.subheader("📥 Export Nightly Sleep Report")
-            exp_col1, exp_col2, exp_col3 = st.columns(3)
+                    tst_history = [float(n["tst_min"]) for n in agg["nights"]]
+                    sleep_debt = calculate_sleep_debt(tst_history, baseline_need_min=480.0)
+                    hypnos = [p.epoch_labels for p in preds] if preds else []
+                    sri = calculate_sri(hypnos) if hypnos else agg["sleep_regularity_index"]
 
-            try:
-                md_text = export_report_markdown(report)
-                exp_col1.download_button(
-                    label="📄 Download Markdown (.md)",
-                    data=md_text,
-                    file_name=f"{night_data.subject}_{night_data.night}_report.md",
-                    mime="text/markdown",
-                )
-            except Exception as e:
-                exp_col1.error(f"Markdown export unavailable: {e}")
+                    sol_history = [float(n.get("sol_min", 20.0)) for n in agg["nights"]]
+                    workdays = sol_history[:5]
+                    freedays = sol_history[5:] if len(sol_history) > 5 else sol_history[-2:]
+                    social_jetlag = calculate_social_jetlag(workdays, freedays)
 
-            try:
-                html_text = export_report_html(report)
-                exp_col2.download_button(
-                    label="🌐 Download HTML Report (.html)",
-                    data=html_text,
-                    file_name=f"{night_data.subject}_{night_data.night}_report.html",
-                    mime="text/html",
-                )
-            except Exception as e:
-                exp_col2.error(f"HTML export unavailable: {e}")
+                    l1, l2, l3, l4 = st.columns(4)
+                    l1.markdown(
+                        metric_card(
+                            "Sleep Debt",
+                            f"{sleep_debt:.1f} min",
+                            "Baseline Target: 8.0h",
+                            "Minimal Debt" if sleep_debt <= 60 else "High Debt",
+                            "optimal" if sleep_debt <= 60 else "alert",
+                        ),
+                        unsafe_allow_html=True,
+                    )
+                    l2.markdown(
+                        metric_card(
+                            "Sleep Regularity Index",
+                            f"{sri:.1f} / 100",
+                            "Circadian Alignment",
+                            "Consistent" if sri >= 80 else "Irregular",
+                            "optimal" if sri >= 80 else "alert",
+                        ),
+                        unsafe_allow_html=True,
+                    )
+                    l3.markdown(
+                        metric_card(
+                            "Social Jetlag",
+                            f"{social_jetlag:.1f} min",
+                            "Workday vs Free Day Shift",
+                            "Low Jetlag" if social_jetlag <= 45 else "Elevated",
+                            "optimal" if social_jetlag <= 45 else "alert",
+                        ),
+                        unsafe_allow_html=True,
+                    )
+                    l4.markdown(
+                        metric_card(
+                            "Mean TST",
+                            f"{agg['mean_tst_min']:.1f} min",
+                            f"+/- {agg['std_tst_min']:.1f} min deviation",
+                        ),
+                        unsafe_allow_html=True,
+                    )
 
-            try:
-                with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp_pdf:
-                    tmp_pdf_path = Path(tmp_pdf.name)
-                export_report_pdf(report, tmp_pdf_path)
-                pdf_bytes = tmp_pdf_path.read_bytes()
-                tmp_pdf_path.unlink(missing_ok=True)
-                exp_col3.download_button(
-                    label="📑 Download PDF Summary (.pdf)",
-                    data=pdf_bytes,
-                    file_name=f"{night_data.subject}_{night_data.night}_report.pdf",
-                    mime="application/pdf",
-                )
-            except Exception as e:
-                exp_col3.error(f"PDF export unavailable: {e}")
+                    trend_df = pd.DataFrame([
+                        {
+                            "Night": n["night_index"],
+                            "Sleep Efficiency (%)": n["sleep_efficiency"],
+                            "TST (min)": n["tst_min"],
+                        }
+                        for n in agg["nights"]
+                    ])
+                    st.line_chart(trend_df.set_index("Night"))
+                else:
+                    st.info(
+                        "Longitudinal multi-night analytics require 2 or more recording sessions. "
+                        "Switch to 'Multi-Night Synthetic Demo' in the sidebar to simulate "
+                        "a 7-day trend."
+                    )
 
-            # Disclaimer
-            st.markdown("---")
-            st.caption(f"🛡️ **Non-Diagnostic Disclaimer**: {report['disclaimer']}")
+            # ---------------------------------------------------------
+            # TAB 4: REPORTS & EXPORT HUB
+            # ---------------------------------------------------------
+            with tab4:
+                st.subheader("Automated Export Engine & Clinical Reports")
+
+                # Live Safety Status Banner
+                tips_to_check = report.get("recommendations", [])
+                violations_found = []
+                for tip in tips_to_check:
+                    is_safe, viols = validate_suggestion_safety(tip)
+                    if not is_safe:
+                        violations_found.extend(viols)
+
+                if not violations_found:
+                    st.markdown(
+                        "<div class='badge-compliance'>"
+                        "✅ <strong>Safety Status:</strong> 100% Non-Diagnostic Compliance "
+                        "Verified "
+                        "(Zero Medical / Prescription Terminology)"
+                        "</div>",
+                        unsafe_allow_html=True,
+                    )
+                else:
+                    st.error(f"Compliance Violation Detected: {'; '.join(violations_found)}")
+
+                st.markdown("### Export Formats")
+                e1, e2, e3 = st.columns(3)
+
+                try:
+                    md_text = export_report_markdown(report)
+                    e1.download_button(
+                        label="📄 Download Markdown (.md)",
+                        data=md_text,
+                        file_name=f"{night_data.subject}_{night_data.night}_report.md",
+                        mime="text/markdown",
+                    )
+                except Exception as ex:
+                    e1.error(f"Markdown export blocked: {ex}")
+
+                try:
+                    html_text = export_report_html(report)
+                    e2.download_button(
+                        label="🌐 Download HTML Report (.html)",
+                        data=html_text,
+                        file_name=f"{night_data.subject}_{night_data.night}_report.html",
+                        mime="text/html",
+                    )
+                except Exception as ex:
+                    e2.error(f"HTML export blocked: {ex}")
+
+                try:
+                    with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp_pdf:
+                        tmp_pdf_path = Path(tmp_pdf.name)
+                    export_report_pdf(report, tmp_pdf_path)
+                    pdf_bytes = tmp_pdf_path.read_bytes()
+                    tmp_pdf_path.unlink(missing_ok=True)
+                    e3.download_button(
+                        label="📑 Download Vector PDF (.pdf)",
+                        data=pdf_bytes,
+                        file_name=f"{night_data.subject}_{night_data.night}_report.pdf",
+                        mime="application/pdf",
+                    )
+                except Exception as ex:
+                    e3.error(f"PDF export blocked: {ex}")
+
+                with st.expander("📄 Report Preview (Markdown)", expanded=False):
+                    st.code(export_report_markdown(report), language="markdown")
 
         except QualityControlError as qc_err:
             st.error(f"⚠️ Quality Control Guard Triggered: {qc_err}")
