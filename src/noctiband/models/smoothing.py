@@ -8,6 +8,16 @@ from scipy.ndimage import median_filter
 from sklearn.base import BaseEstimator, TransformerMixin
 from sklearn.metrics import f1_score
 
+from noctiband.postprocess.smoothing import median_smooth
+
+__all__ = [
+    "TemporalSmoother",
+    "median_smooth",
+    "smooth_labels",
+    "smooth_probabilities",
+    "tune_smoother_on_oof",
+]
+
 
 def smooth_probabilities(
     probs: np.ndarray,

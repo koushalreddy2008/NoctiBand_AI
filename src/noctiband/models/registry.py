@@ -1,18 +1,21 @@
-"""Estimator registry for sleep stage models.
-
-Allows decoupled registration of machine learning models (including external
-models like SVM from Person B) without modifying the evaluation harness.
-"""
+"""Estimator registry and model construction for sleep stage models."""
 
 from __future__ import annotations
 
 from collections.abc import Callable
 
 from sklearn.base import BaseEstimator
+from sklearn.dummy import DummyClassifier
 from sklearn.ensemble import RandomForestClassifier
+from sklearn.impute import SimpleImputer
 from sklearn.linear_model import LogisticRegression
+from sklearn.pipeline import Pipeline
+from sklearn.preprocessing import StandardScaler
+from sklearn.svm import SVC
 
 from noctiband.models.baselines import MajorityBaseline, MotionThresholdBaseline
+
+SEED = 42
 
 _REGISTRY: dict[str, Callable[[], BaseEstimator]] = {}
 
@@ -60,6 +63,27 @@ def list_estimators() -> list[str]:
     return sorted(_REGISTRY.keys())
 
 
+def build_model(kind: str, params: dict | None = None) -> Pipeline:
+    """Build a leak-free sklearn Pipeline containing imputer, scaler, and model."""
+    params = dict(params or {})
+    if kind == "dummy":
+        clf = DummyClassifier(strategy="most_frequent")
+    elif kind == "logreg":
+        clf = LogisticRegression(random_state=SEED, **params)
+    elif kind == "random_forest":
+        clf = RandomForestClassifier(random_state=SEED, **params)
+    elif kind == "svm":
+        clf = SVC(probability=True, random_state=SEED, **params)
+    else:
+        raise ValueError(f"Unknown model kind: {kind}")
+
+    return Pipeline([
+        ("impute", SimpleImputer(strategy="median")),
+        ("scale", StandardScaler()),
+        ("clf", clf),
+    ])
+
+
 # Pre-register built-in models
 register_estimator("majority", lambda: MajorityBaseline())
 register_estimator("motion_threshold", lambda: MotionThresholdBaseline())
@@ -73,3 +97,4 @@ register_estimator(
         class_weight="balanced_subsample", random_state=42, n_estimators=100
     ),
 )
+register_estimator("svm", lambda: SVC(probability=True, random_state=42))

@@ -1,0 +1,6 @@
+name: svm
+model: svm
+params:
+  kernel: rbf
+  C: 1.0
+  class_weight: balanced
