@@ -207,6 +207,30 @@ def run_app():
         ["Synthetic Demo Night", "Upload Wearable Data", "Multi-Night Synthetic Demo"],
     )
 
+    # Sidebar model selection
+    st.sidebar.markdown("---")
+    st.sidebar.header("Model Engine")
+    root_dir = Path(__file__).resolve().parent.parent
+    xgb_path = root_dir / "models" / "noctiband_xgb_v0.2.joblib"
+    lr_path = root_dir / "models" / "noctiband_v0.1.joblib"
+
+    model_choices: dict[str, Path] = {}
+    if xgb_path.exists():
+        model_choices["XGBoost v0.2 (Gradient Boosted)"] = xgb_path
+    if lr_path.exists():
+        model_choices["Logistic Regression v0.1 (Linear)"] = lr_path
+
+    if model_choices:
+        selected_model_name = st.sidebar.selectbox(
+            "Classifier Architecture:",
+            list(model_choices.keys()),
+            index=0,
+        )
+        chosen_model_path = model_choices[selected_model_name]
+        st.sidebar.caption(f"Active: `{selected_model_name}`")
+    else:
+        chosen_model_path = None
+
     # Session state hygiene
     if "active_mode" not in st.session_state:
         st.session_state["active_mode"] = mode
@@ -233,7 +257,7 @@ def run_app():
             predictions = []
             try:
                 for n in multi_nights:
-                    pred = predict_night(n, allow_partial=True)
+                    pred = predict_night(n, model_path=chosen_model_path, allow_partial=True)
                     predictions.append(pred)
             except QualityControlError as qc_err:
                 st.error(f"⚠️ Multi-Night Quality Control Failure: {qc_err}")
@@ -274,7 +298,7 @@ def run_app():
 
     if night_data is not None:
         try:
-            prediction = predict_night(night_data, allow_partial=True)
+            prediction = predict_night(night_data, model_path=chosen_model_path, allow_partial=True)
             report = make_report(
                 prediction,
                 subject_id=night_data.subject,

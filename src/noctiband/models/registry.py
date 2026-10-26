@@ -74,6 +74,20 @@ def build_model(kind: str, params: dict | None = None) -> Pipeline:
         clf = RandomForestClassifier(random_state=SEED, **params)
     elif kind == "svm":
         clf = SVC(probability=True, random_state=SEED, **params)
+    elif kind in ("xgboost", "xgb"):
+        from xgboost import XGBClassifier
+
+        xgb_params = {
+            "n_estimators": 100,
+            "max_depth": 4,
+            "learning_rate": 0.08,
+            "subsample": 0.8,
+            "colsample_bytree": 0.8,
+            "eval_metric": "logloss",
+            "random_state": SEED,
+        }
+        xgb_params.update(params)
+        clf = XGBClassifier(**xgb_params)
     else:
         raise ValueError(f"Unknown model kind: {kind}")
 
@@ -98,3 +112,22 @@ register_estimator(
     ),
 )
 register_estimator("svm", lambda: SVC(probability=True, random_state=42))
+
+
+def _make_xgb_estimator() -> BaseEstimator:
+    from xgboost import XGBClassifier
+
+    return XGBClassifier(
+        n_estimators=100,
+        max_depth=4,
+        learning_rate=0.08,
+        subsample=0.8,
+        colsample_bytree=0.8,
+        eval_metric="logloss",
+        random_state=42,
+    )
+
+
+register_estimator("xgboost", _make_xgb_estimator)
+register_estimator("xgb", _make_xgb_estimator)
+
