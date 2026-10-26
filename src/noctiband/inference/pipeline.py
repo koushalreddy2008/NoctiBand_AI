@@ -10,10 +10,10 @@ from pathlib import Path
 import joblib
 import pandas as pd
 
+from noctiband.io.loader import load_night
 from noctiband.models.data import ROOT
 from noctiband.postprocess.smoothing import median_smooth
-from src.io.loader import load_night
-from src.preprocessing.epoching import align_night_to_epochs
+from noctiband.preprocessing.epoching import align_night_to_epochs
 
 
 def run_night(
@@ -51,7 +51,7 @@ def run_night(
             raise FileNotFoundError(f"Recording folder not found: {night_folder}")
 
     # 1. Load raw recording session
-    rec = load_night(path)
+    rec = load_night(path, allow_partial=True)
 
     # 2. Segment and align signals into 30-second epochs
     epoched = align_night_to_epochs(rec)

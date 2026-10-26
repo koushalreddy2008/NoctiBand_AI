@@ -5,7 +5,7 @@ Tests for timestamp mapping, alignment rule, boundary auditing, and windowing.
 import numpy as np
 import pandas as pd
 
-from src.preprocessing.alignment import (
+from noctiband.preprocessing.alignment import (
     audit_signal_alignment,
     epoch_to_datetimes,
     epoch_to_timestamps,

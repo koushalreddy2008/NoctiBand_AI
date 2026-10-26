@@ -7,9 +7,9 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from src.io.contracts import SignalQuality, SleepStage
-from src.io.loader import load_night
-from src.preprocessing.epoching import align_night_to_epochs
+from noctiband.io.contracts import SignalQuality, SleepStage
+from noctiband.io.loader import load_night_recording as load_night
+from noctiband.preprocessing.epoching import align_night_to_epochs
 
 ROOT = Path(__file__).resolve().parent.parent
 RAW_DIR = ROOT / "data" / "raw" / "Bidslab00" / "3"

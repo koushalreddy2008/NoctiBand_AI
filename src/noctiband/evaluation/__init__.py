@@ -8,7 +8,7 @@ from noctiband.evaluation.harness import (
     compute_metrics,
     evaluate_cv,
 )
-from src.evaluation.metrics import DEFAULT_LABELS, DEFAULT_NAMES, evaluate
+from noctiband.evaluation.metrics import DEFAULT_LABELS, DEFAULT_NAMES, evaluate
 
 __all__ = [
     "DEFAULT_LABELS",

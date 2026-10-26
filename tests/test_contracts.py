@@ -5,7 +5,7 @@ Tests for data contracts, SleepStage, and schema models.
 import numpy as np
 import pandas as pd
 
-from src.io.contracts import EpochedNight, NightRecording, SignalQuality, SleepStage
+from noctiband.io.contracts import EpochedNight, NightRecording, SignalQuality, SleepStage
 
 
 def test_sleep_stage_names():

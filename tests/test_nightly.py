@@ -7,8 +7,8 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from noctiband.io.contracts import SignalQuality
 from noctiband.reporting.nightly import build_report, format_report_text, plot_hypnogram
-from src.io.contracts import SignalQuality
 
 
 def make(y, quality="ok"):

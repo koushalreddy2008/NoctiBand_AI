@@ -5,8 +5,8 @@ from datetime import UTC, datetime
 import numpy as np
 import pandas as pd
 
-from src.io.contracts import NightRecording
-from src.preprocessing.epoching import (
+from noctiband.io.contracts import NightRecording
+from noctiband.preprocessing.epoching import (
     align_night_to_epochs,
     compute_strided_epoch_aggregations,
     iter_align_night_chunks,

@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-import src.models.registry as legacy_registry
+import noctiband.models.registry as legacy_registry
 from noctiband.models.registry import SEED, build_model
 
 ROOT = Path(__file__).resolve().parent.parent

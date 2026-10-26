@@ -6,9 +6,13 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from noctiband.preprocessing.epoching import assign_epochs, epoch_coverage
-from src.io.contracts import NightRecording, SignalQuality, SleepStage
-from src.preprocessing.epoching import EpochAligner, align_night_to_epochs
+from noctiband.io.contracts import NightRecording, SignalQuality, SleepStage
+from noctiband.preprocessing.epoching import (
+    EpochAligner,
+    align_night_to_epochs,
+    assign_epochs,
+    epoch_coverage,
+)
 
 
 def test_align_night_preserves_missing_epochs():

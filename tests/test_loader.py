@@ -10,18 +10,20 @@ import pandas as pd
 import pytest
 from scipy.io import savemat
 
-from noctiband.io.loader import is_header_present, load_night, parse_rec_start
-from noctiband.types import NightData
-from src.io.loader import (
+from noctiband.io.loader import (
+    is_header_present,
     load_bp,
     load_hr,
     load_labels,
     load_motion,
+    load_night,
     load_spo2,
+    parse_rec_start,
 )
-from src.io.loader import (
-    load_night as load_night_src,
+from noctiband.io.loader import (
+    load_night_recording as load_night_src,
 )
+from noctiband.types import NightData
 
 
 def test_load_hr_headerless(tmp_path: Path):
